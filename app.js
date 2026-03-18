@@ -741,7 +741,6 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
 
             // Output actions
             document.getElementById('confirm-dispose').addEventListener('click', () => this.disposeSelected());
-            document.getElementById('cancel-output').addEventListener('click', () => this.hideOutputSelect());
             document.getElementById('output-search').addEventListener('input', () => {
                 this.showOutputSelect(document.getElementById('output-search').value);
             });
@@ -773,6 +772,8 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
 
             // Show/hide sections based on mode
             document.getElementById('scanner-section').style.display = mode === 'input' ? '' : 'none';
+            // Only show Location dropdown in Add mode (it's the storage location for new items)
+            document.getElementById('session-location').closest('.session-field').style.display = mode === 'input' ? '' : 'none';
             this.hideForm();
             this.hideOutputSelect();
             this.hideMoveSelect();
