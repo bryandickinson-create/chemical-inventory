@@ -797,10 +797,10 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
         }
 
         // ---- Manual Entry ----
-        handleManualBarcode() {
+        async handleManualBarcode() {
             const input = document.getElementById('manual-barcode');
-            const barcode = input.value.trim();
-            if (!barcode) {
+            const query = input.value.trim();
+            if (!query) {
                 showToast('Enter a product identifier.', 'error');
                 return;
             }
@@ -809,11 +809,105 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 return;
             }
             input.value = '';
-            if (this.mode === 'input') {
-                this.showInputForm(barcode);
-            } else {
-                this.showOutputSelect(barcode);
+
+            // If Gemini key is available, use AI to look up the chemical
+            if (this.getGeminiKey()) {
+                const snapStatus = document.getElementById('snap-status');
+                snapStatus.textContent = 'Looking up "' + query + '"...';
+                snapStatus.className = 'lookup-status loading';
+
+                try {
+                    const result = await this.textLookupWithGemini(query);
+                    if (result && (result.productName || result.productNumber)) {
+                        snapStatus.textContent = 'Found: ' + (result.productName || result.productNumber);
+                        snapStatus.className = 'lookup-status success';
+
+                        const form = document.getElementById('chemical-form');
+                        document.getElementById('chem-form').reset();
+                        this.setLookupStatus('');
+                        document.getElementById('vendor-link').style.display = 'none';
+
+                        const barcode = result.productNumber || query;
+                        document.getElementById('f-barcode').value = barcode;
+                        if (result.vendor) document.getElementById('f-vendor').value = result.vendor;
+                        if (result.productNumber) document.getElementById('f-product-number').value = result.productNumber;
+                        if (result.productName) document.getElementById('f-product-name').value = result.productName;
+                        if (result.casNumber) document.getElementById('f-cas').value = result.casNumber;
+                        if (result.amount) document.getElementById('f-amount').value = result.amount;
+                        if (result.unit) {
+                            const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
+                            document.getElementById('f-unit').value = unitMap[(result.unit || '').toLowerCase()] || result.unit;
+                        }
+
+                        document.getElementById('autofill-notice').textContent = 'Auto-filled from web lookup. Verify and edit as needed.';
+                        document.getElementById('autofill-notice').style.display = '';
+
+                        form.style.display = '';
+                        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                        if (document.getElementById('auto-submit').checked) {
+                            await this.submitChemical();
+                        }
+                        setTimeout(() => { snapStatus.textContent = ''; }, 3000);
+                        return;
+                    } else {
+                        snapStatus.textContent = 'Not found. Fill in manually.';
+                        snapStatus.className = 'lookup-status error';
+                    }
+                } catch (e) {
+                    console.error('Text lookup failed:', e);
+                    snapStatus.textContent = 'Lookup failed. Fill in manually.';
+                    snapStatus.className = 'lookup-status error';
+                }
+                setTimeout(() => { snapStatus.textContent = ''; }, 3000);
             }
+
+            // Fallback: just open the form with the query as barcode
+            this.showInputForm(query);
+        }
+
+        async textLookupWithGemini(query) {
+            const apiKey = this.getGeminiKey();
+            if (!apiKey) return null;
+
+            const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [{
+                                text: `Look up this chemical product: "${query}"
+
+This could be a vendor catalog number (e.g. "A4034", "S7653"), a chemical name (e.g. "sodium chloride"), a CAS number, or a vendor + product number (e.g. "Sigma A4034").
+
+Return ONLY valid JSON (no markdown, no code fences):
+{
+  "vendor": "vendor/manufacturer name",
+  "productNumber": "catalog/product number",
+  "productName": "chemical name",
+  "casNumber": "CAS number in format XXXXX-XX-X",
+  "amount": "common package size number (e.g. 100, 500, 1)",
+  "unit": "common package unit (g, mL, L, kg, etc.)"
+}
+If you cannot determine a field, use empty string "". Be precise with CAS number format.`
+                            }]
+                        }]
+                    })
+                }
+            );
+
+            if (!response.ok) return null;
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!text) return null;
+
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try { return JSON.parse(jsonMatch[0]); } catch (e) { return null; }
+            }
+            return null;
         }
 
         // ---- Input Mode: Chemical Form ----
