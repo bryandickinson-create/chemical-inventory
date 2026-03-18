@@ -97,6 +97,9 @@
                     <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
                 </button>
                 <input type="file" id="label-capture" accept="image/*" capture="environment" style="display:none">
+                <label class="auto-submit-toggle">
+                    <input type="checkbox" id="auto-submit"> Auto-add (skip review)
+                </label>
                 <div id="snap-status" class="lookup-status" style="text-align:center;margin-top:0.5rem"></div>
             </div>
             <div class="divider"><span>or enter manually</span></div>
@@ -172,9 +175,6 @@
                     <button type="submit" class="btn btn-success btn-large">Add to Inventory</button>
                     <button type="button" id="cancel-form" class="btn btn-secondary">Cancel</button>
                 </div>
-                <label class="auto-submit-toggle">
-                    <input type="checkbox" id="auto-submit"> Auto-submit (rapid scanning)
-                </label>
             </form>
         </section>
 
@@ -256,6 +256,6 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
 </body>
 </html>
