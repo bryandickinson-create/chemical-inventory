@@ -58,10 +58,10 @@
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="firebase-url-input">Firebase Database URL</label>
-                    <p class="settings-hint">Enables shared lab database. Create a free project at <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a></p>
+                    <label for="firebase-url-input">Firebase Config</label>
+                    <p class="settings-hint">Paste the Firebase config JSON from Project Settings → Your Apps → Web app config. Or just the database URL.</p>
                     <div class="input-row">
-                        <input type="text" id="firebase-url-input" placeholder="https://your-project.firebaseio.com">
+                        <input type="text" id="firebase-url-input" placeholder='{"apiKey":"...","databaseURL":"https://..."}'>
                         <button id="save-firebase-url" class="btn btn-primary">Save</button>
                     </div>
                     <div id="firebase-url-status" class="settings-hint" style="margin-top:0.35rem"></div>
@@ -267,6 +267,6 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=10"></script>
 </body>
 </html>

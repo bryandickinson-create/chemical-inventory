@@ -116,11 +116,20 @@
         }
 
         async init() {
-            // Initialize Firebase with just the database URL
             if (!firebase.apps.length) {
-                firebase.initializeApp({ databaseURL: this.url });
+                // Parse config - user can paste either just URL or full JSON config
+                let config;
+                try {
+                    config = JSON.parse(this.url);
+                } catch (e) {
+                    // Just a URL - build minimal config
+                    config = { databaseURL: this.url };
+                }
+                firebase.initializeApp(config);
             }
             this.dbRef = firebase.database().ref();
+            // Test connection
+            await this.dbRef.child('.info/connected').once('value');
         }
 
         _encodeKey(key) {
@@ -297,7 +306,7 @@
                     showToast('Connected to shared database.', 'success');
                 } catch (e) {
                     console.error('Firebase init failed:', e);
-                    showToast('Firebase connection failed. Using local storage.', 'error');
+                    showToast('Firebase failed: ' + (e.message || 'Unknown error'), 'error');
                     this.db = new ChemDB();
                     await this.db.init();
                 }
