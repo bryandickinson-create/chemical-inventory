@@ -174,8 +174,9 @@
     class App {
         constructor() {
             this.db = new ChemDB();
-            this.mode = 'input'; // 'input' or 'output'
+            this.mode = 'input'; // 'input', 'output', or 'move'
             this.selectedBottles = new Set();
+            this.selectedMoveBottles = new Set();
             this.modalTarget = null; // 'names' or 'locations'
         }
 
@@ -720,6 +721,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             // Mode toggle
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
             document.getElementById('mode-output').addEventListener('click', () => this.setMode('output'));
+            document.getElementById('mode-move').addEventListener('click', () => this.setMode('move'));
 
             // Manual entry
             document.getElementById('manual-submit').addEventListener('click', () => this.handleManualBarcode());
@@ -744,6 +746,12 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 this.showOutputSelect(document.getElementById('output-search').value);
             });
 
+            // Move actions
+            document.getElementById('confirm-move').addEventListener('click', () => this.moveSelected());
+            document.getElementById('move-search').addEventListener('input', () => {
+                this.showMoveSelect(document.getElementById('move-search').value);
+            });
+
             // Inventory search & filter
             document.getElementById('search-inventory').addEventListener('input', () => this.refreshInventory());
             document.getElementById('filter-status').addEventListener('change', () => this.refreshInventory());
@@ -761,19 +769,23 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
 
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
+            document.getElementById('mode-move').classList.toggle('active', mode === 'move');
 
-            document.getElementById('scanner-title').textContent =
-                mode === 'input' ? 'Add Chemical' : 'Remove Chemical';
-
-            // Hide forms when switching modes
+            // Show/hide sections based on mode
+            document.getElementById('scanner-section').style.display = mode === 'input' ? '' : 'none';
             this.hideForm();
             this.hideOutputSelect();
+            this.hideMoveSelect();
 
-            // Show output search immediately when switching to output mode
             if (mode === 'output') {
                 document.getElementById('output-select').style.display = '';
                 document.getElementById('output-search').value = '';
                 this.showOutputSelect('');
+            } else if (mode === 'move') {
+                document.getElementById('move-select').style.display = '';
+                document.getElementById('move-search').value = '';
+                this.populateMoveLocations();
+                this.showMoveSelect('');
             }
         }
 
@@ -983,6 +995,113 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
         hideOutputSelect() {
             document.getElementById('output-select').style.display = 'none';
             this.selectedBottles.clear();
+        }
+
+        // ---- Move Mode ----
+        async populateMoveLocations() {
+            const locations = await this.db.getList('locations');
+            const sel = document.getElementById('move-location');
+            while (sel.options.length > 1) sel.remove(1);
+            locations.sort((a, b) => a.localeCompare(b));
+            locations.forEach(loc => {
+                const opt = document.createElement('option');
+                opt.value = loc;
+                opt.textContent = loc;
+                sel.appendChild(opt);
+            });
+        }
+
+        async showMoveSelect(searchQuery) {
+            const allItems = await this.db.getAllItems();
+            const query = (searchQuery || '').toLowerCase();
+            const items = allItems.filter(i => i.status === 'active' && (
+                !query ||
+                (i.productName || '').toLowerCase().includes(query) ||
+                (i.vendor || '').toLowerCase().includes(query) ||
+                (i.productNumber || '').toLowerCase().includes(query) ||
+                (i.casNumber || '').toLowerCase().includes(query) ||
+                (i.location || '').toLowerCase().includes(query)
+            ));
+            const list = document.getElementById('move-bottles');
+            const noMsg = document.getElementById('move-no-msg');
+            const destSection = document.getElementById('move-destination');
+
+            this.selectedMoveBottles.clear();
+            list.innerHTML = '';
+
+            if (items.length === 0) {
+                noMsg.style.display = '';
+                destSection.style.display = 'none';
+            } else {
+                noMsg.style.display = 'none';
+                destSection.style.display = '';
+
+                items.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'bottle-item';
+                    div.innerHTML = `
+                        <input type="checkbox" data-id="${item.id}">
+                        <div class="bottle-info">
+                            <div class="bottle-name">${this.esc(item.productName)}</div>
+                            <div class="bottle-details">
+                                ${this.esc(item.vendor)} &bull; ${this.esc(item.productNumber)}
+                                <br>${this.esc(item.amount)} ${this.esc(item.unit)}
+                                ${item.location ? ' &bull; <strong>' + this.esc(item.location) + '</strong>' : ''}
+                            </div>
+                        </div>
+                    `;
+                    const checkbox = div.querySelector('input[type="checkbox"]');
+                    div.addEventListener('click', (e) => {
+                        if (e.target !== checkbox) checkbox.checked = !checkbox.checked;
+                        div.classList.toggle('selected', checkbox.checked);
+                        if (checkbox.checked) this.selectedMoveBottles.add(item.id);
+                        else this.selectedMoveBottles.delete(item.id);
+                    });
+                    list.appendChild(div);
+                });
+            }
+        }
+
+        async moveSelected() {
+            if (this.selectedMoveBottles.size === 0) {
+                showToast('Select at least one bottle to move.', 'error');
+                feedbackError();
+                return;
+            }
+            const newLocation = document.getElementById('move-location').value;
+            if (!newLocation) {
+                showToast('Select a destination location.', 'error');
+                feedbackError();
+                return;
+            }
+            const movedBy = this.getSessionName();
+            if (!movedBy) {
+                showToast('Select your Name first.', 'error');
+                return;
+            }
+
+            let count = 0;
+            for (const id of this.selectedMoveBottles) {
+                const item = await this.db.getItem(id);
+                if (item && item.status === 'active') {
+                    item.location = newLocation;
+                    item.notes = (item.notes ? item.notes + ' | ' : '') + 'Moved by ' + movedBy + ' on ' + new Date().toLocaleDateString();
+                    await this.db.updateItem(item);
+                    count++;
+                }
+            }
+
+            feedbackSuccess();
+            showToast(`Moved ${count} bottle${count !== 1 ? 's' : ''} to ${newLocation}.`, 'success');
+            this.selectedMoveBottles.clear();
+            document.getElementById('move-search').value = '';
+            this.showMoveSelect('');
+            this.refreshInventory();
+        }
+
+        hideMoveSelect() {
+            document.getElementById('move-select').style.display = 'none';
+            this.selectedMoveBottles.clear();
         }
 
         // ---- Inventory Display ----

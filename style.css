@@ -128,6 +128,11 @@ body.mode-output .mode-btn[data-mode="output"] {
     color: white;
 }
 
+body.mode-move .mode-btn[data-mode="move"] {
+    background: var(--primary);
+    color: white;
+}
+
 /* ==================== Session Bar ==================== */
 .session-bar {
     background: white;

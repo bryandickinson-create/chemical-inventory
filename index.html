@@ -19,6 +19,9 @@
             <button id="mode-output" class="mode-btn" data-mode="output">
                 <span class="mode-icon">&minus;</span> Remove
             </button>
+            <button id="mode-move" class="mode-btn" data-mode="move">
+                <span class="mode-icon">&#x21C4;</span> Move
+            </button>
         </div>
     </header>
 
@@ -175,11 +178,11 @@
             </form>
         </section>
 
-        <!-- Output Mode: Select Bottles to Remove -->
+        <!-- Remove Mode -->
         <section id="output-select" class="card" style="display:none">
             <h2>Remove from Inventory</h2>
             <div class="form-group">
-                <input type="text" id="output-search" placeholder="Search by name, product #, CAS, vendor...">
+                <input type="text" id="output-search" placeholder="Search by name, product #, CAS, vendor, location...">
             </div>
             <div id="matching-bottles"></div>
             <div id="no-bottles-msg" class="empty-state" style="display:none">
@@ -187,7 +190,29 @@
             </div>
             <div class="form-actions" id="output-actions" style="display:none">
                 <button id="confirm-dispose" class="btn btn-danger btn-large">Mark as Disposed</button>
-                <button id="cancel-output" class="btn btn-secondary">Cancel</button>
+            </div>
+        </section>
+
+        <!-- Move Mode -->
+        <section id="move-select" class="card" style="display:none">
+            <h2>Move Chemical</h2>
+            <div class="form-group">
+                <input type="text" id="move-search" placeholder="Search by name, product #, CAS, vendor, location...">
+            </div>
+            <div id="move-bottles"></div>
+            <div id="move-no-msg" class="empty-state" style="display:none">
+                No active bottles found.
+            </div>
+            <div id="move-destination" style="display:none">
+                <div class="form-group" style="margin-top:0.75rem">
+                    <label for="move-location">New Location</label>
+                    <select id="move-location">
+                        <option value="">-- Select destination --</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button id="confirm-move" class="btn btn-primary btn-large">Move Selected</button>
+                </div>
             </div>
         </section>
 
@@ -231,6 +256,6 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=4"></script>
 </body>
 </html>
