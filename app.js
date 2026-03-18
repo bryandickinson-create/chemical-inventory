@@ -525,6 +525,184 @@
             el.className = 'lookup-status' + (type ? ' ' + type : '');
         }
 
+        // ---- Settings (API Key) ----
+        openSettings() {
+            const input = document.getElementById('api-key-input');
+            const status = document.getElementById('api-key-status');
+            const saved = localStorage.getItem('chem_gemini_api_key');
+            input.value = saved || '';
+            status.textContent = saved ? 'Key is saved.' : '';
+            status.style.color = saved ? 'var(--success)' : '';
+            document.getElementById('settings-modal').style.display = '';
+        }
+
+        closeSettings() {
+            document.getElementById('settings-modal').style.display = 'none';
+        }
+
+        saveApiKey() {
+            const key = document.getElementById('api-key-input').value.trim();
+            const status = document.getElementById('api-key-status');
+            if (!key) {
+                localStorage.removeItem('chem_gemini_api_key');
+                status.textContent = 'Key removed.';
+                status.style.color = 'var(--danger)';
+            } else {
+                localStorage.setItem('chem_gemini_api_key', key);
+                status.textContent = 'Key saved!';
+                status.style.color = 'var(--success)';
+            }
+            showToast(key ? 'API key saved.' : 'API key removed.', 'success');
+        }
+
+        // ---- Snap Label (AI Vision) ----
+        triggerSnapLabel() {
+            if (!this.getSessionName() || !this.getSessionLocation()) {
+                showToast('Select your Name and Location first.', 'error');
+                return;
+            }
+            const apiKey = localStorage.getItem('chem_gemini_api_key');
+            if (!apiKey) {
+                showToast('Set up your API key in Settings (gear icon) first.', 'error');
+                return;
+            }
+            document.getElementById('label-capture').click();
+        }
+
+        async handleLabelCapture(file) {
+            if (!file) return;
+
+            const snapStatus = document.getElementById('snap-status');
+            snapStatus.textContent = 'Analyzing label...';
+            snapStatus.className = 'lookup-status loading';
+
+            try {
+                // Convert image to base64
+                const base64 = await this.fileToBase64(file);
+
+                // Call Gemini Vision API
+                const result = await this.analyzeWithGemini(base64);
+
+                if (result) {
+                    snapStatus.textContent = 'Label read successfully!';
+                    snapStatus.className = 'lookup-status success';
+
+                    // Show and fill the form
+                    this.hideOutputSelect();
+                    const form = document.getElementById('chemical-form');
+                    document.getElementById('chem-form').reset();
+                    document.getElementById('autofill-notice').style.display = 'none';
+                    this.setLookupStatus('');
+                    document.getElementById('vendor-link').style.display = 'none';
+
+                    // Use the barcode from QR data or generate a reference from product info
+                    const barcode = result.productNumber
+                        ? (result.productNumber + (result.amount && result.unit ? '-' + result.amount + result.unit.toUpperCase() : ''))
+                        : 'LABEL-' + Date.now();
+                    document.getElementById('f-barcode').value = barcode;
+
+                    if (result.vendor) document.getElementById('f-vendor').value = result.vendor;
+                    if (result.productNumber) document.getElementById('f-product-number').value = result.productNumber;
+                    if (result.productName) document.getElementById('f-product-name').value = result.productName;
+                    if (result.casNumber) document.getElementById('f-cas').value = result.casNumber;
+                    if (result.amount) document.getElementById('f-amount').value = result.amount;
+                    if (result.unit) {
+                        const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
+                        const normalized = unitMap[result.unit.toLowerCase()] || result.unit;
+                        document.getElementById('f-unit').value = normalized;
+                    }
+                    if (result.lotNumber) document.getElementById('f-notes').value = 'Lot: ' + result.lotNumber;
+
+                    document.getElementById('autofill-notice').textContent = 'Auto-filled from label photo. Verify and edit as needed.';
+                    document.getElementById('autofill-notice').style.display = '';
+
+                    form.style.display = '';
+                    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                    setTimeout(() => { snapStatus.textContent = ''; }, 3000);
+                } else {
+                    snapStatus.textContent = 'Could not read label. Try again with a clearer photo.';
+                    snapStatus.className = 'lookup-status error';
+                }
+            } catch (e) {
+                console.error('Label analysis failed:', e);
+                snapStatus.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
+                snapStatus.className = 'lookup-status error';
+            }
+        }
+
+        fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // Remove the data URL prefix to get raw base64
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async analyzeWithGemini(imageBase64) {
+            const apiKey = localStorage.getItem('chem_gemini_api_key');
+            if (!apiKey) throw new Error('No API key configured');
+
+            const response = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                {
+                                    text: `Analyze this chemical product label image. Extract the following information and return ONLY valid JSON (no markdown, no code fences, no extra text):
+{
+  "vendor": "manufacturer or vendor name (e.g. Sigma-Aldrich, Fisher Scientific, Alfa Aesar)",
+  "productNumber": "catalog or product number",
+  "productName": "chemical or product name",
+  "casNumber": "CAS registry number in format XXXXX-XX-X",
+  "amount": "quantity number only (e.g. 500, 1, 2.5)",
+  "unit": "unit of measurement (g, kg, mg, mL, L, etc.)",
+  "lotNumber": "lot or batch number if visible"
+}
+If a field is not visible or cannot be determined, use an empty string "". Be precise with the CAS number format.`
+                                },
+                                {
+                                    inlineData: {
+                                        mimeType: 'image/jpeg',
+                                        data: imageBase64
+                                    }
+                                }
+                            ]
+                        }]
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error?.message || 'API request failed (' + response.status + ')');
+            }
+
+            const data = await response.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!text) throw new Error('No response from AI');
+
+            // Parse JSON from response (handle possible markdown code blocks)
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    return JSON.parse(jsonMatch[0]);
+                } catch (e) {
+                    console.error('JSON parse failed:', jsonMatch[0]);
+                    throw new Error('Could not parse AI response');
+                }
+            }
+            throw new Error('No structured data in AI response');
+        }
+
         bindEvents() {
             // Session dropdowns - save on change
             document.getElementById('session-name').addEventListener('change', () => this.saveSession());
@@ -546,6 +724,25 @@
 
             // Lookup button
             document.getElementById('lookup-btn').addEventListener('click', () => this.doLookup());
+
+            // Settings
+            document.getElementById('settings-btn').addEventListener('click', () => this.openSettings());
+            document.getElementById('settings-close').addEventListener('click', () => this.closeSettings());
+            document.getElementById('settings-modal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('settings-modal')) this.closeSettings();
+            });
+            document.getElementById('save-api-key').addEventListener('click', () => this.saveApiKey());
+            document.getElementById('api-key-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); this.saveApiKey(); }
+            });
+
+            // Snap Label
+            document.getElementById('snap-label').addEventListener('click', () => this.triggerSnapLabel());
+            document.getElementById('label-capture').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) this.handleLabelCapture(file);
+                e.target.value = ''; // Reset so same file can be re-selected
+            });
 
             // Mode toggle
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
