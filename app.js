@@ -107,6 +107,37 @@
         }
     }
 
+    // ==================== Haptic & Audio Feedback ====================
+    function hapticFeedback(type = 'light') {
+        try {
+            if (navigator.vibrate) {
+                if (type === 'success') navigator.vibrate([50, 30, 50]);
+                else if (type === 'error') navigator.vibrate([100, 50, 100, 50, 100]);
+                else navigator.vibrate(30);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function playTone(freq = 800, duration = 150, type = 'sine') {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            gain.gain.value = 0.3;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration / 1000);
+            osc.stop(ctx.currentTime + duration / 1000);
+        } catch (e) { /* ignore */ }
+    }
+
+    function feedbackSuccess() { hapticFeedback('success'); playTone(880, 120); setTimeout(() => playTone(1100, 150), 130); }
+    function feedbackRemove() { hapticFeedback('light'); playTone(440, 200, 'triangle'); }
+    function feedbackError() { hapticFeedback('error'); playTone(300, 300, 'sawtooth'); }
+
     // ==================== Toast Notifications ====================
     function showToast(message, type = '') {
         const toast = document.getElementById('toast');
@@ -143,8 +174,6 @@
     class App {
         constructor() {
             this.db = new ChemDB();
-            this.scanner = null;
-            this.scanning = false;
             this.mode = 'input'; // 'input' or 'output'
             this.selectedBottles = new Set();
             this.modalTarget = null; // 'names' or 'locations'
@@ -274,73 +303,6 @@
             await this.refreshModalList();
             await this.loadSessionDropdowns();
             showToast('Removed: ' + value, 'success');
-        }
-
-        // ---- QR Code / Barcode Content Parsing ----
-        parseScannedContent(content) {
-            content = content.trim();
-
-            // Try parsing as URL first
-            try {
-                const url = new URL(content);
-                const host = url.hostname.toLowerCase();
-                const parts = url.pathname.split('/').filter(Boolean);
-                const lastPart = parts[parts.length - 1] || '';
-
-                if (host.includes('sigmaaldrich') || host.includes('milliporesigma') || host.includes('emdmillipore')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'Sigma-Aldrich', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                if (host.includes('fishersci') || host.includes('thermofisher')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'Fisher Scientific', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                if (host.includes('vwr.com') || host.includes('avantorsciences')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'VWR', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                if (host.includes('alfa.com')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'Alfa Aesar', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                if (host.includes('tcichemicals')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'TCI', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                if (host.includes('acros') || host.includes('acrosorganics')) {
-                    return this.enrichParsed({ barcode: content, vendor: 'Acros Organics', productNumber: lastPart.toUpperCase(), isUrl: true });
-                }
-                return { barcode: content, isUrl: true };
-            } catch (e) {
-                // Not a URL — continue to structured text parsing
-            }
-
-            // Check for structured QR data: "ProductNum-Size,LotNumber" (e.g. "A4034-100G,SLBM1708V")
-            const commaMatch = content.match(/^([^,]+),(.+)$/);
-            if (commaMatch) {
-                const productPart = commaMatch[1].trim();  // e.g. "A4034-100G"
-                const lotNumber = commaMatch[2].trim();     // e.g. "SLBM1708V"
-                const parsed = this.enrichParsed({ barcode: content, productNumber: productPart.toUpperCase() });
-                parsed.lotNumber = lotNumber;
-                return parsed;
-            }
-
-            // Plain barcode — still try to extract size info
-            return this.enrichParsed({ barcode: content });
-        }
-
-        // Extract amount, unit, and clean product number from a product string like "A4034-100G"
-        enrichParsed(parsed) {
-            if (!parsed.productNumber) return parsed;
-
-            // Match trailing size pattern: -100G, -500ML, -1KG, -250MG, -1L, -2.5L, etc.
-            const sizeMatch = parsed.productNumber.match(/^(.+?)[-_](\d+\.?\d*)\s*(G|KG|MG|ML|L|UL|OZ|LB|EA)$/i);
-            if (sizeMatch) {
-                parsed.cleanProductNumber = sizeMatch[1];  // "A4034"
-                parsed.amount = sizeMatch[2];               // "100"
-                parsed.unit = sizeMatch[3].toLowerCase();   // "g"
-                // Normalize unit names
-                const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb', 'ea': 'each' };
-                parsed.unit = unitMap[parsed.unit] || parsed.unit;
-            } else {
-                parsed.cleanProductNumber = parsed.productNumber;
-            }
-            return parsed;
         }
 
         // ---- PubChem Lookup ----
@@ -616,12 +578,18 @@
                         document.getElementById('f-unit').value = normalized;
                     }
                     if (result.lotNumber) document.getElementById('f-notes').value = 'Lot: ' + result.lotNumber;
+                    if (result.expiration) document.getElementById('f-expiration').value = result.expiration;
 
                     document.getElementById('autofill-notice').textContent = 'Auto-filled from label photo. Verify and edit as needed.';
                     document.getElementById('autofill-notice').style.display = '';
 
                     form.style.display = '';
                     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                    // Auto-submit if toggle is checked
+                    if (document.getElementById('auto-submit').checked) {
+                        await this.submitChemical();
+                    }
 
                     setTimeout(() => { snapStatus.textContent = ''; }, 3000);
                 } else {
@@ -669,7 +637,8 @@
   "casNumber": "CAS registry number in format XXXXX-XX-X",
   "amount": "quantity number only (e.g. 500, 1, 2.5)",
   "unit": "unit of measurement (g, kg, mg, mL, L, etc.)",
-  "lotNumber": "lot or batch number if visible"
+  "lotNumber": "lot or batch number if visible",
+  "expiration": "expiration date in YYYY-MM-DD format if visible"
 }
 If a field is not visible or cannot be determined, use an empty string "". Be precise with the CAS number format.`
                                 },
@@ -752,11 +721,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
             document.getElementById('mode-output').addEventListener('click', () => this.setMode('output'));
 
-            // Scanner
-            document.getElementById('start-scan').addEventListener('click', () => this.startScanner());
-            document.getElementById('stop-scan').addEventListener('click', () => this.stopScanner());
-
-            // Manual barcode entry
+            // Manual entry
             document.getElementById('manual-submit').addEventListener('click', () => this.handleManualBarcode());
             document.getElementById('manual-barcode').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -775,6 +740,9 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             // Output actions
             document.getElementById('confirm-dispose').addEventListener('click', () => this.disposeSelected());
             document.getElementById('cancel-output').addEventListener('click', () => this.hideOutputSelect());
+            document.getElementById('output-search').addEventListener('input', () => {
+                this.showOutputSelect(document.getElementById('output-search').value);
+            });
 
             // Inventory search & filter
             document.getElementById('search-inventory').addEventListener('input', () => this.refreshInventory());
@@ -795,103 +763,42 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
 
             document.getElementById('scanner-title').textContent =
-                mode === 'input' ? 'Scan Chemical In' : 'Scan Chemical Out';
+                mode === 'input' ? 'Add Chemical' : 'Remove Chemical';
 
             // Hide forms when switching modes
             this.hideForm();
             this.hideOutputSelect();
-        }
 
-        // ---- Scanner ----
-        async startScanner() {
-            const readerContainer = document.getElementById('reader-container');
-            readerContainer.classList.add('active');
-            document.getElementById('start-scan').style.display = 'none';
-            document.getElementById('stop-scan').style.display = '';
-
-            try {
-                this.scanner = new Html5Qrcode('reader');
-                await this.scanner.start(
-                    { facingMode: 'environment' },
-                    {
-                        fps: 10,
-                        qrbox: { width: 250, height: 150 },
-                        aspectRatio: 1.5,
-                        formatsToSupport: [
-                            Html5QrcodeSupportedFormats.CODE_128,
-                            Html5QrcodeSupportedFormats.CODE_39,
-                            Html5QrcodeSupportedFormats.EAN_13,
-                            Html5QrcodeSupportedFormats.EAN_8,
-                            Html5QrcodeSupportedFormats.UPC_A,
-                            Html5QrcodeSupportedFormats.UPC_E,
-                            Html5QrcodeSupportedFormats.DATA_MATRIX,
-                            Html5QrcodeSupportedFormats.QR_CODE,
-                            Html5QrcodeSupportedFormats.CODE_93,
-                            Html5QrcodeSupportedFormats.ITF,
-                        ],
-                    },
-                    (decodedText) => this.onScanSuccess(decodedText),
-                    () => {} // ignore scan failures (no barcode in frame)
-                );
-                this.scanning = true;
-            } catch (err) {
-                console.error('Scanner error:', err);
-                showToast('Camera access failed. Use manual entry.', 'error');
-                this.resetScannerUI();
+            // Show output search immediately when switching to output mode
+            if (mode === 'output') {
+                document.getElementById('output-select').style.display = '';
+                document.getElementById('output-search').value = '';
+                this.showOutputSelect('');
             }
         }
 
-        async stopScanner() {
-            if (this.scanner && this.scanning) {
-                try {
-                    await this.scanner.stop();
-                } catch (e) {
-                    // ignore
-                }
-                this.scanning = false;
-            }
-            this.resetScannerUI();
-        }
-
-        resetScannerUI() {
-            document.getElementById('reader-container').classList.remove('active');
-            document.getElementById('start-scan').style.display = '';
-            document.getElementById('stop-scan').style.display = 'none';
-        }
-
-        async onScanSuccess(content) {
-            await this.stopScanner();
-            const parsed = this.parseScannedContent(content);
-            showToast('Scanned: ' + (parsed.productNumber || parsed.barcode), 'success');
-            this.handleBarcode(parsed.barcode, parsed);
-        }
-
+        // ---- Manual Entry ----
         handleManualBarcode() {
             const input = document.getElementById('manual-barcode');
-            const raw = input.value.trim();
-            if (!raw) {
-                showToast('Enter a barcode or product number.', 'error');
+            const barcode = input.value.trim();
+            if (!barcode) {
+                showToast('Enter a product identifier.', 'error');
                 return;
             }
-            input.value = '';
-            const parsed = this.parseScannedContent(raw);
-            this.handleBarcode(parsed.barcode, parsed);
-        }
-
-        async handleBarcode(barcode, parsed = {}) {
             if (!this.getSessionName() || !this.getSessionLocation()) {
                 showToast('Select your Name and Location first.', 'error');
                 return;
             }
+            input.value = '';
             if (this.mode === 'input') {
-                await this.showInputForm(barcode, parsed);
+                this.showInputForm(barcode);
             } else {
-                await this.showOutputSelect(barcode);
+                this.showOutputSelect(barcode);
             }
         }
 
         // ---- Input Mode: Chemical Form ----
-        async showInputForm(barcode, parsed = {}) {
+        async showInputForm(barcode) {
             const known = await this.db.getChemical(barcode);
             const form = document.getElementById('chemical-form');
             const notice = document.getElementById('autofill-notice');
@@ -913,26 +820,6 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 document.getElementById('chem-form').reset();
                 document.getElementById('f-barcode').value = barcode;
                 notice.style.display = 'none';
-
-                // Pre-fill from QR code parsing
-                if (parsed.vendor) document.getElementById('f-vendor').value = parsed.vendor;
-                if (parsed.cleanProductNumber) {
-                    document.getElementById('f-product-number').value = parsed.cleanProductNumber;
-                } else if (parsed.productNumber) {
-                    document.getElementById('f-product-number').value = parsed.productNumber;
-                }
-                if (parsed.amount) document.getElementById('f-amount').value = parsed.amount;
-                if (parsed.unit) document.getElementById('f-unit').value = parsed.unit;
-                if (parsed.lotNumber) document.getElementById('f-notes').value = 'Lot: ' + parsed.lotNumber;
-
-                // Auto-lookup if we have a product number
-                const hasProductNum = parsed.cleanProductNumber || parsed.productNumber;
-                if (hasProductNum) {
-                    form.style.display = '';
-                    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    this.doLookup();
-                    return;
-                }
             }
 
             form.style.display = '';
@@ -947,12 +834,14 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             const casNumber = document.getElementById('f-cas').value.trim();
             const amount = document.getElementById('f-amount').value.trim();
             const unit = document.getElementById('f-unit').value;
+            const expiration = document.getElementById('f-expiration').value || '';
             const notes = document.getElementById('f-notes').value.trim();
             const location = this.getSessionLocation();
             const addedBy = this.getSessionName();
 
             if (!vendor || !productNumber || !productName || !amount) {
                 showToast('Fill in all required fields.', 'error');
+                feedbackError();
                 return;
             }
 
@@ -978,6 +867,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 amount,
                 unit,
                 location,
+                expiration,
                 notes,
                 addedBy,
                 removedBy: null,
@@ -987,6 +877,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             };
 
             await this.db.addItem(item);
+            feedbackSuccess();
             showToast(`Added: ${productName} (${amount} ${unit})`, 'success');
             this.hideForm();
             this.refreshInventory();
@@ -997,14 +888,22 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
         }
 
         // ---- Output Mode: Select Bottles ----
-        async showOutputSelect(barcode) {
-            const items = await this.db.getActiveItemsByBarcode(barcode);
+        async showOutputSelect(searchQuery) {
+            const allItems = await this.db.getAllItems();
+            const query = (searchQuery || '').toLowerCase();
+            const items = allItems.filter(i => i.status === 'active' && (
+                !query ||
+                (i.productName || '').toLowerCase().includes(query) ||
+                (i.vendor || '').toLowerCase().includes(query) ||
+                (i.productNumber || '').toLowerCase().includes(query) ||
+                (i.casNumber || '').toLowerCase().includes(query) ||
+                (i.barcode || '').toLowerCase().includes(query) ||
+                (i.location || '').toLowerCase().includes(query)
+            ));
             const section = document.getElementById('output-select');
             const list = document.getElementById('matching-bottles');
             const noMsg = document.getElementById('no-bottles-msg');
             const actions = document.getElementById('output-actions');
-
-            document.getElementById('output-barcode-label').textContent = 'Barcode: ' + barcode;
 
             this.selectedBottles.clear();
             list.innerHTML = '';
@@ -1075,6 +974,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 }
             }
 
+            feedbackRemove();
             showToast(`Removed ${count} bottle${count !== 1 ? 's' : ''} from inventory.`, 'success');
             this.hideOutputSelect();
             this.refreshInventory();
@@ -1150,6 +1050,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                         <div><strong>CAS:</strong> ${this.esc(item.casNumber || '—')}</div>
                         <div><strong>Amount:</strong> ${this.esc(item.amount)} ${this.esc(item.unit)}</div>
                         ${item.location ? `<div><strong>Location:</strong> ${this.esc(item.location)}</div>` : ''}
+                        ${item.expiration ? `<div><strong>Expires:</strong> ${this.esc(item.expiration)}</div>` : ''}
                         ${item.addedBy ? `<div><strong>Added by:</strong> ${this.esc(item.addedBy)}</div>` : ''}
                         ${item.removedBy ? `<div><strong>Removed by:</strong> ${this.esc(item.removedBy)}</div>` : ''}
                         ${item.notes ? `<div><strong>Notes:</strong> ${this.esc(item.notes)}</div>` : ''}
@@ -1261,6 +1162,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 'Unit': item.unit,
                 'Location': item.location || '',
                 'Status': item.status,
+                'Expiration': item.expiration || '',
                 'Added By': item.addedBy || '',
                 'Date Added': formatDate(item.dateIn),
                 'Removed By': item.removedBy || '',

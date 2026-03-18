@@ -502,6 +502,21 @@ input[readonly] {
 .lookup-status.error { color: var(--danger); }
 .lookup-status.loading { color: var(--primary); }
 
+.auto-submit-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--gray-500);
+    cursor: pointer;
+}
+.auto-submit-toggle input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--success);
+}
+
 /* ==================== Output Selection ==================== */
 .subtitle {
     color: var(--gray-500);
@@ -753,21 +768,3 @@ input[readonly] {
     }
 }
 
-/* Hide html5-qrcode default UI cruft */
-#reader__dashboard_section_swaplink,
-#reader__status_span,
-#reader__header_message {
-    display: none !important;
-}
-
-#reader__dashboard_section {
-    padding: 0 !important;
-}
-
-#reader__scan_region {
-    min-height: 200px;
-}
-
-#reader__scan_region video {
-    border-radius: var(--radius-sm) !important;
-}

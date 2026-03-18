@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Chemical Inventory Scanner</title>
+    <title>Dickinson Group Inventory</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="mode-input">
     <header>
         <div class="header-top">
-            <h1>Chemical Inventory</h1>
+            <h1>Dickinson Group Inventory</h1>
             <button id="settings-btn" class="settings-btn" title="Settings">&#9881;</button>
         </div>
         <div class="mode-toggle">
             <button id="mode-input" class="mode-btn active" data-mode="input">
-                <span class="mode-icon">+</span> Input
+                <span class="mode-icon">+</span> Add
             </button>
             <button id="mode-output" class="mode-btn" data-mode="output">
-                <span class="mode-icon">&minus;</span> Output
+                <span class="mode-icon">&minus;</span> Remove
             </button>
         </div>
     </header>
@@ -88,18 +88,9 @@
     <main>
         <!-- Scanner Section -->
         <section id="scanner-section" class="card">
-            <h2 id="scanner-title">Scan Chemical In</h2>
-            <div id="reader-container">
-                <div id="reader"></div>
-            </div>
+            <h2 id="scanner-title">Add Chemical</h2>
             <div class="scanner-controls">
-                <button id="start-scan" class="btn btn-primary btn-large">
-                    <span class="btn-icon">&#x1F4F7;</span> Scan Barcode / QR
-                </button>
-                <button id="stop-scan" class="btn btn-secondary" style="display:none">
-                    Stop Camera
-                </button>
-                <button id="snap-label" class="btn btn-secondary btn-large" style="margin-top:0.5rem">
+                <button id="snap-label" class="btn btn-primary btn-large">
                     <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
                 </button>
                 <input type="file" id="label-capture" accept="image/*" capture="environment" style="display:none">
@@ -107,7 +98,7 @@
             </div>
             <div class="divider"><span>or enter manually</span></div>
             <div class="input-row">
-                <input type="text" id="manual-barcode" placeholder="Type barcode / product number">
+                <input type="text" id="manual-barcode" placeholder="Type vendor + product number">
                 <button id="manual-submit" class="btn btn-primary">Go</button>
             </div>
         </section>
@@ -167,23 +158,32 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label for="f-expiration">Expiration Date</label>
+                    <input type="date" id="f-expiration">
+                </div>
+                <div class="form-group">
                     <label for="f-notes">Notes</label>
-                    <input type="text" id="f-notes" placeholder="e.g., Lot #, expiration date">
+                    <input type="text" id="f-notes" placeholder="e.g., Lot #, special storage">
                 </div>
                 <div class="form-actions">
                     <button type="submit" class="btn btn-success btn-large">Add to Inventory</button>
                     <button type="button" id="cancel-form" class="btn btn-secondary">Cancel</button>
                 </div>
+                <label class="auto-submit-toggle">
+                    <input type="checkbox" id="auto-submit"> Auto-submit (rapid scanning)
+                </label>
             </form>
         </section>
 
         <!-- Output Mode: Select Bottles to Remove -->
         <section id="output-select" class="card" style="display:none">
             <h2>Remove from Inventory</h2>
-            <p id="output-barcode-label" class="subtitle"></p>
+            <div class="form-group">
+                <input type="text" id="output-search" placeholder="Search by name, product #, CAS, vendor...">
+            </div>
             <div id="matching-bottles"></div>
             <div id="no-bottles-msg" class="empty-state" style="display:none">
-                No active bottles found for this barcode.
+                No active bottles found.
             </div>
             <div class="form-actions" id="output-actions" style="display:none">
                 <button id="confirm-dispose" class="btn btn-danger btn-large">Mark as Disposed</button>
@@ -230,8 +230,7 @@
 
     <div id="toast" class="toast" style="display:none"></div>
 
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=2"></script>
+    <script src="app.js?v=3"></script>
 </body>
 </html>
