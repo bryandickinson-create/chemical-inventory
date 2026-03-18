@@ -275,6 +275,8 @@
         // ---- QR Code / Barcode Content Parsing ----
         parseScannedContent(content) {
             content = content.trim();
+
+            // Try parsing as URL first
             try {
                 const url = new URL(content);
                 const host = url.hostname.toLowerCase();
@@ -282,28 +284,59 @@
                 const lastPart = parts[parts.length - 1] || '';
 
                 if (host.includes('sigmaaldrich') || host.includes('milliporesigma') || host.includes('emdmillipore')) {
-                    return { barcode: content, vendor: 'Sigma-Aldrich', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'Sigma-Aldrich', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 if (host.includes('fishersci') || host.includes('thermofisher')) {
-                    return { barcode: content, vendor: 'Fisher Scientific', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'Fisher Scientific', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 if (host.includes('vwr.com') || host.includes('avantorsciences')) {
-                    return { barcode: content, vendor: 'VWR', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'VWR', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 if (host.includes('alfa.com')) {
-                    return { barcode: content, vendor: 'Alfa Aesar', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'Alfa Aesar', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 if (host.includes('tcichemicals')) {
-                    return { barcode: content, vendor: 'TCI', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'TCI', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 if (host.includes('acros') || host.includes('acrosorganics')) {
-                    return { barcode: content, vendor: 'Acros Organics', productNumber: lastPart.toUpperCase(), isUrl: true };
+                    return this.enrichParsed({ barcode: content, vendor: 'Acros Organics', productNumber: lastPart.toUpperCase(), isUrl: true });
                 }
                 return { barcode: content, isUrl: true };
             } catch (e) {
-                // Not a URL — plain barcode
+                // Not a URL — continue to structured text parsing
             }
-            return { barcode: content };
+
+            // Check for structured QR data: "ProductNum-Size,LotNumber" (e.g. "A4034-100G,SLBM1708V")
+            const commaMatch = content.match(/^([^,]+),(.+)$/);
+            if (commaMatch) {
+                const productPart = commaMatch[1].trim();  // e.g. "A4034-100G"
+                const lotNumber = commaMatch[2].trim();     // e.g. "SLBM1708V"
+                const parsed = this.enrichParsed({ barcode: content, productNumber: productPart.toUpperCase() });
+                parsed.lotNumber = lotNumber;
+                return parsed;
+            }
+
+            // Plain barcode — still try to extract size info
+            return this.enrichParsed({ barcode: content });
+        }
+
+        // Extract amount, unit, and clean product number from a product string like "A4034-100G"
+        enrichParsed(parsed) {
+            if (!parsed.productNumber) return parsed;
+
+            // Match trailing size pattern: -100G, -500ML, -1KG, -250MG, -1L, -2.5L, etc.
+            const sizeMatch = parsed.productNumber.match(/^(.+?)[-_](\d+\.?\d*)\s*(G|KG|MG|ML|L|UL|OZ|LB|EA)$/i);
+            if (sizeMatch) {
+                parsed.cleanProductNumber = sizeMatch[1];  // "A4034"
+                parsed.amount = sizeMatch[2];               // "100"
+                parsed.unit = sizeMatch[3].toLowerCase();   // "g"
+                // Normalize unit names
+                const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb', 'ea': 'each' };
+                parsed.unit = unitMap[parsed.unit] || parsed.unit;
+            } else {
+                parsed.cleanProductNumber = parsed.productNumber;
+            }
+            return parsed;
         }
 
         // ---- PubChem Lookup ----
@@ -349,20 +382,26 @@
         }
 
         async pubchemLookup(vendor, productNumber) {
-            const cleanNum = productNumber.replace(/[-_]?\d+\s*(?:g|kg|mg|ml|l|oz|lb)$/i, '').trim();
+            // Strip size suffix: A4034-100G → A4034, W332615-1L → W332615
+            const cleanNum = productNumber.replace(/[-_]\d+\.?\d*\s*(?:g|kg|mg|ml|l|ul|oz|lb|ea)$/i, '').trim();
             const sourceNames = this.getPubchemSources(vendor);
+            // Try multiple variations: clean number first, then original
+            const numsToTry = [cleanNum];
+            if (cleanNum !== productNumber) numsToTry.push(productNumber);
 
             // Strategy 1: PubChem substance source ID lookup
             for (const source of sourceNames) {
-                for (const num of [cleanNum, productNumber]) {
+                for (const num of numsToTry) {
                     const cid = await this.pubchemSubstanceLookup(source, num);
                     if (cid) return await this.getCompoundInfo(cid);
                 }
             }
 
             // Strategy 2: Compound name search (works for CAS numbers and common names)
-            const cid = await this.pubchemCompoundSearch(cleanNum);
-            if (cid) return await this.getCompoundInfo(cid);
+            for (const num of numsToTry) {
+                const cid = await this.pubchemCompoundSearch(num);
+                if (cid) return await this.getCompoundInfo(cid);
+            }
 
             return null;
         }
@@ -650,12 +689,20 @@
                 document.getElementById('f-barcode').value = barcode;
                 notice.style.display = 'none';
 
-                // Pre-fill from QR code URL parsing
+                // Pre-fill from QR code parsing
                 if (parsed.vendor) document.getElementById('f-vendor').value = parsed.vendor;
-                if (parsed.productNumber) document.getElementById('f-product-number').value = parsed.productNumber;
+                if (parsed.cleanProductNumber) {
+                    document.getElementById('f-product-number').value = parsed.cleanProductNumber;
+                } else if (parsed.productNumber) {
+                    document.getElementById('f-product-number').value = parsed.productNumber;
+                }
+                if (parsed.amount) document.getElementById('f-amount').value = parsed.amount;
+                if (parsed.unit) document.getElementById('f-unit').value = parsed.unit;
+                if (parsed.lotNumber) document.getElementById('f-notes').value = 'Lot: ' + parsed.lotNumber;
 
-                // Auto-lookup if we got vendor + product number from QR
-                if (parsed.vendor && parsed.productNumber) {
+                // Auto-lookup if we have a product number
+                const hasProductNum = parsed.cleanProductNumber || parsed.productNumber;
+                if (hasProductNum) {
                     form.style.display = '';
                     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     this.doLookup();
