@@ -107,6 +107,100 @@
         }
     }
 
+    // ==================== Firebase Database ====================
+    class FirebaseDB {
+        constructor(url) {
+            this.url = url;
+            this.dbRef = null;
+            this.onChangeCallback = null;
+        }
+
+        async init() {
+            // Initialize Firebase with just the database URL
+            if (!firebase.apps.length) {
+                firebase.initializeApp({ databaseURL: this.url });
+            }
+            this.dbRef = firebase.database().ref();
+        }
+
+        _encodeKey(key) {
+            // Firebase keys can't contain . $ # [ ] /
+            return (key || '').replace(/[.$/\[\]#]/g, '_');
+        }
+
+        // -- Managed lists (names, locations) --
+        async getList(key) {
+            const snap = await this.dbRef.child('lists').child(key).child('items').once('value');
+            return snap.val() || [];
+        }
+
+        async saveList(key, items) {
+            return this.dbRef.child('lists').child(key).set({ items });
+        }
+
+        // -- Chemical templates --
+        async getChemical(barcode) {
+            const snap = await this.dbRef.child('chemicals').child(this._encodeKey(barcode)).once('value');
+            return snap.val() || undefined;
+        }
+
+        async saveChemical(data) {
+            return this.dbRef.child('chemicals').child(this._encodeKey(data.barcode)).set(data);
+        }
+
+        // -- Inventory items --
+        async addItem(item) {
+            return this.dbRef.child('inventory').child(item.id).set(item);
+        }
+
+        async getItem(id) {
+            const snap = await this.dbRef.child('inventory').child(id).once('value');
+            return snap.val() || undefined;
+        }
+
+        async updateItem(item) {
+            return this.dbRef.child('inventory').child(item.id).set(item);
+        }
+
+        async deleteItem(id) {
+            return this.dbRef.child('inventory').child(id).remove();
+        }
+
+        async getAllItems() {
+            const snap = await this.dbRef.child('inventory').once('value');
+            const val = snap.val();
+            return val ? Object.values(val) : [];
+        }
+
+        async getItemsByBarcode(barcode) {
+            const items = await this.getAllItems();
+            return items.filter(i => i.barcode === barcode);
+        }
+
+        async getActiveItemsByBarcode(barcode) {
+            const items = await this.getItemsByBarcode(barcode);
+            return items.filter(i => i.status === 'active');
+        }
+
+        // Real-time sync: call callback whenever inventory changes
+        startSync(callback) {
+            this.onChangeCallback = callback;
+            this.dbRef.child('inventory').on('value', () => {
+                if (this.onChangeCallback) this.onChangeCallback();
+            });
+            // Also sync lists
+            this.dbRef.child('lists').on('value', () => {
+                if (this.onChangeCallback) this.onChangeCallback();
+            });
+        }
+
+        stopSync() {
+            this.dbRef.child('inventory').off();
+            this.dbRef.child('lists').off();
+            this.onChangeCallback = null;
+        }
+    }
+
     // ==================== Haptic & Audio Feedback ====================
     function hapticFeedback(type = 'light') {
         try {
@@ -173,7 +267,7 @@
     // ==================== Main App ====================
     class App {
         constructor() {
-            this.db = new ChemDB();
+            this.db = null; // Set in init()
             this.mode = 'input'; // 'input', 'output', or 'move'
             this.selectedBottles = new Set();
             this.selectedMoveBottles = new Set();
@@ -184,8 +278,33 @@
             return localStorage.getItem('chem_gemini_api_key') || '';
         }
 
+        getFirebaseUrl() {
+            return localStorage.getItem('chem_firebase_url') || '';
+        }
+
         async init() {
-            await this.db.init();
+            // Use Firebase if URL is configured, otherwise fall back to IndexedDB
+            const fbUrl = this.getFirebaseUrl();
+            if (fbUrl) {
+                this.db = new FirebaseDB(fbUrl);
+                try {
+                    await this.db.init();
+                    // Start real-time sync
+                    this.db.startSync(() => {
+                        this.refreshInventory();
+                        this.loadSessionDropdowns();
+                    });
+                    showToast('Connected to shared database.', 'success');
+                } catch (e) {
+                    console.error('Firebase init failed:', e);
+                    showToast('Firebase connection failed. Using local storage.', 'error');
+                    this.db = new ChemDB();
+                    await this.db.init();
+                }
+            } else {
+                this.db = new ChemDB();
+                await this.db.init();
+            }
             this.bindEvents();
             await this.loadSessionDropdowns();
             this.restoreSession();
@@ -492,14 +611,22 @@
             el.className = 'lookup-status' + (type ? ' ' + type : '');
         }
 
-        // ---- Settings (API Key) ----
+        // ---- Settings ----
         openSettings() {
+            // Gemini key
             const input = document.getElementById('api-key-input');
             const status = document.getElementById('api-key-status');
             const saved = localStorage.getItem('chem_gemini_api_key');
             input.value = saved || '';
             status.textContent = saved ? 'Key is saved.' : '';
             status.style.color = saved ? 'var(--success)' : '';
+            // Firebase URL
+            const fbInput = document.getElementById('firebase-url-input');
+            const fbStatus = document.getElementById('firebase-url-status');
+            const fbSaved = this.getFirebaseUrl();
+            fbInput.value = fbSaved || '';
+            fbStatus.textContent = fbSaved ? 'Connected to shared database.' : '';
+            fbStatus.style.color = fbSaved ? 'var(--success)' : '';
             document.getElementById('settings-modal').style.display = '';
         }
 
@@ -520,6 +647,21 @@
                 status.style.color = 'var(--success)';
             }
             showToast(key ? 'API key saved.' : 'API key removed.', 'success');
+        }
+
+        saveFirebaseUrl() {
+            const url = document.getElementById('firebase-url-input').value.trim();
+            const status = document.getElementById('firebase-url-status');
+            if (!url) {
+                localStorage.removeItem('chem_firebase_url');
+                status.textContent = 'Removed. Using local storage. Reload to apply.';
+                status.style.color = 'var(--danger)';
+            } else {
+                localStorage.setItem('chem_firebase_url', url);
+                status.textContent = 'Saved! Reload the page to connect.';
+                status.style.color = 'var(--success)';
+            }
+            showToast(url ? 'Firebase URL saved. Reload to connect.' : 'Firebase removed.', 'success');
         }
 
         // ---- Snap Label (AI Vision) ----
@@ -708,6 +850,10 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('save-api-key').addEventListener('click', () => this.saveApiKey());
             document.getElementById('api-key-input').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); this.saveApiKey(); }
+            });
+            document.getElementById('save-firebase-url').addEventListener('click', () => this.saveFirebaseUrl());
+            document.getElementById('firebase-url-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); this.saveFirebaseUrl(); }
             });
 
             // Snap Label

@@ -58,6 +58,15 @@
             </div>
             <div class="modal-body">
                 <div class="form-group">
+                    <label for="firebase-url-input">Firebase Database URL</label>
+                    <p class="settings-hint">Enables shared lab database. Create a free project at <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a></p>
+                    <div class="input-row">
+                        <input type="text" id="firebase-url-input" placeholder="https://your-project.firebaseio.com">
+                        <button id="save-firebase-url" class="btn btn-primary">Save</button>
+                    </div>
+                    <div id="firebase-url-status" class="settings-hint" style="margin-top:0.35rem"></div>
+                </div>
+                <div class="form-group" style="margin-top:1rem">
                     <label for="api-key-input">Google Gemini API Key</label>
                     <p class="settings-hint">Required for "Snap Label" feature. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> — only needs to be entered once per device.</p>
                     <div class="input-row">
@@ -255,7 +264,9 @@
 
     <div id="toast" class="toast" style="display:none"></div>
 
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>
