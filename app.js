@@ -781,12 +781,18 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             if (mode === 'output') {
                 document.getElementById('output-select').style.display = '';
                 document.getElementById('output-search').value = '';
-                this.showOutputSelect('');
+                document.getElementById('matching-bottles').innerHTML = '';
+                document.getElementById('no-bottles-msg').style.display = 'none';
+                document.getElementById('output-actions').style.display = 'none';
+                document.getElementById('output-search').focus();
             } else if (mode === 'move') {
                 document.getElementById('move-select').style.display = '';
                 document.getElementById('move-search').value = '';
+                document.getElementById('move-bottles').innerHTML = '';
+                document.getElementById('move-no-msg').style.display = 'none';
+                document.getElementById('move-destination').style.display = 'none';
                 this.populateMoveLocations();
-                this.showMoveSelect('');
+                document.getElementById('move-search').focus();
             }
         }
 
@@ -902,10 +908,23 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
 
         // ---- Output Mode: Select Bottles ----
         async showOutputSelect(searchQuery) {
+            const query = (searchQuery || '').toLowerCase().trim();
+            const list = document.getElementById('matching-bottles');
+            const noMsg = document.getElementById('no-bottles-msg');
+            const actions = document.getElementById('output-actions');
+
+            // Require at least 2 chars to search
+            if (query.length < 2) {
+                list.innerHTML = '';
+                noMsg.style.display = '';
+                noMsg.textContent = 'Type to search chemicals...';
+                actions.style.display = 'none';
+                this.selectedBottles.clear();
+                return;
+            }
+
             const allItems = await this.db.getAllItems();
-            const query = (searchQuery || '').toLowerCase();
             const items = allItems.filter(i => i.status === 'active' && (
-                !query ||
                 (i.productName || '').toLowerCase().includes(query) ||
                 (i.vendor || '').toLowerCase().includes(query) ||
                 (i.productNumber || '').toLowerCase().includes(query) ||
@@ -913,16 +932,13 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 (i.barcode || '').toLowerCase().includes(query) ||
                 (i.location || '').toLowerCase().includes(query)
             ));
-            const section = document.getElementById('output-select');
-            const list = document.getElementById('matching-bottles');
-            const noMsg = document.getElementById('no-bottles-msg');
-            const actions = document.getElementById('output-actions');
 
             this.selectedBottles.clear();
             list.innerHTML = '';
 
             if (items.length === 0) {
                 noMsg.style.display = '';
+                noMsg.textContent = 'No matching chemicals found.';
                 actions.style.display = 'none';
             } else {
                 noMsg.style.display = 'none';
@@ -1013,19 +1029,29 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
         }
 
         async showMoveSelect(searchQuery) {
+            const query = (searchQuery || '').toLowerCase().trim();
+            const list = document.getElementById('move-bottles');
+            const noMsg = document.getElementById('move-no-msg');
+            const destSection = document.getElementById('move-destination');
+
+            // Require at least 2 chars to search
+            if (query.length < 2) {
+                list.innerHTML = '';
+                noMsg.style.display = '';
+                noMsg.textContent = 'Type to search chemicals...';
+                destSection.style.display = 'none';
+                this.selectedMoveBottles.clear();
+                return;
+            }
+
             const allItems = await this.db.getAllItems();
-            const query = (searchQuery || '').toLowerCase();
             const items = allItems.filter(i => i.status === 'active' && (
-                !query ||
                 (i.productName || '').toLowerCase().includes(query) ||
                 (i.vendor || '').toLowerCase().includes(query) ||
                 (i.productNumber || '').toLowerCase().includes(query) ||
                 (i.casNumber || '').toLowerCase().includes(query) ||
                 (i.location || '').toLowerCase().includes(query)
             ));
-            const list = document.getElementById('move-bottles');
-            const noMsg = document.getElementById('move-no-msg');
-            const destSection = document.getElementById('move-destination');
 
             this.selectedMoveBottles.clear();
             list.innerHTML = '';
