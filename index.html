@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Chemical Inventory Scanner</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="mode-input">
+    <header>
+        <h1>Chemical Inventory</h1>
+        <div class="mode-toggle">
+            <button id="mode-input" class="mode-btn active" data-mode="input">
+                <span class="mode-icon">+</span> Input
+            </button>
+            <button id="mode-output" class="mode-btn" data-mode="output">
+                <span class="mode-icon">&minus;</span> Output
+            </button>
+        </div>
+    </header>
+
+    <!-- Session Bar -->
+    <section id="session-bar" class="session-bar">
+        <div class="session-inner">
+            <div class="session-field">
+                <label for="session-name">Name</label>
+                <div class="session-select-row">
+                    <select id="session-name">
+                        <option value="">-- Select --</option>
+                    </select>
+                    <button id="edit-names" class="btn btn-sm btn-secondary" title="Edit names">Edit</button>
+                </div>
+            </div>
+            <div class="session-field">
+                <label for="session-location">Location</label>
+                <div class="session-select-row">
+                    <select id="session-location">
+                        <option value="">-- Select --</option>
+                    </select>
+                    <button id="edit-locations" class="btn btn-sm btn-secondary" title="Edit locations">Edit</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- List Edit Modal -->
+    <div id="list-modal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Edit List</h3>
+                <button id="modal-close" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="input-row">
+                    <input type="text" id="modal-new-item" placeholder="Add new entry...">
+                    <button id="modal-add" class="btn btn-primary">Add</button>
+                </div>
+                <ul id="modal-list" class="modal-list"></ul>
+                <div id="modal-empty" class="empty-state" style="padding:1rem">No entries yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <!-- Scanner Section -->
+        <section id="scanner-section" class="card">
+            <h2 id="scanner-title">Scan Chemical In</h2>
+            <div id="reader-container">
+                <div id="reader"></div>
+            </div>
+            <div class="scanner-controls">
+                <button id="start-scan" class="btn btn-primary btn-large">
+                    <span class="btn-icon">&#x1F4F7;</span> Start Camera
+                </button>
+                <button id="stop-scan" class="btn btn-secondary" style="display:none">
+                    Stop Camera
+                </button>
+            </div>
+            <div class="divider"><span>or enter manually</span></div>
+            <div class="input-row">
+                <input type="text" id="manual-barcode" placeholder="Type barcode / product number">
+                <button id="manual-submit" class="btn btn-primary">Go</button>
+            </div>
+        </section>
+
+        <!-- Chemical Form (Input Mode) -->
+        <section id="chemical-form" class="card" style="display:none">
+            <h2 id="form-title">Add Chemical to Inventory</h2>
+            <div id="autofill-notice" class="notice" style="display:none">
+                Auto-filled from previous scan. Verify and edit as needed.
+            </div>
+            <form id="chem-form">
+                <div class="form-group">
+                    <label for="f-barcode">Barcode</label>
+                    <input type="text" id="f-barcode" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="f-vendor">Vendor *</label>
+                    <input type="text" id="f-vendor" placeholder="e.g., Sigma-Aldrich, Fisher Scientific" required>
+                </div>
+                <div class="form-group">
+                    <label for="f-product-number">Product Number *</label>
+                    <input type="text" id="f-product-number" placeholder="e.g., S7653" required>
+                </div>
+                <div id="lookup-row" class="lookup-row">
+                    <button type="button" id="lookup-btn" class="btn btn-sm btn-primary">Look Up Info</button>
+                    <span id="lookup-status" class="lookup-status"></span>
+                    <a id="vendor-link" href="#" target="_blank" class="btn btn-sm btn-secondary" style="display:none">Open Vendor Page</a>
+                </div>
+                <div class="form-group">
+                    <label for="f-product-name">Product Name *</label>
+                    <input type="text" id="f-product-name" placeholder="e.g., Sodium Chloride (auto-filled by Look Up)" required>
+                </div>
+                <div class="form-group">
+                    <label for="f-cas">CAS Number</label>
+                    <input type="text" id="f-cas" placeholder="e.g., 7647-14-5 (auto-filled by Look Up)">
+                </div>
+                <div class="form-row">
+                    <div class="form-group flex-2">
+                        <label for="f-amount">Amount *</label>
+                        <input type="text" id="f-amount" placeholder="e.g., 500" required>
+                    </div>
+                    <div class="form-group flex-1">
+                        <label for="f-unit">Unit</label>
+                        <select id="f-unit">
+                            <option value="g">g</option>
+                            <option value="kg">kg</option>
+                            <option value="mg">mg</option>
+                            <option value="mL" selected>mL</option>
+                            <option value="L">L</option>
+                            <option value="uL">&micro;L</option>
+                            <option value="oz">oz</option>
+                            <option value="lb">lb</option>
+                            <option value="each">each</option>
+                            <option value="box">box</option>
+                            <option value="pack">pack</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="f-notes">Notes</label>
+                    <input type="text" id="f-notes" placeholder="e.g., Lot #, expiration date">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-success btn-large">Add to Inventory</button>
+                    <button type="button" id="cancel-form" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Output Mode: Select Bottles to Remove -->
+        <section id="output-select" class="card" style="display:none">
+            <h2>Remove from Inventory</h2>
+            <p id="output-barcode-label" class="subtitle"></p>
+            <div id="matching-bottles"></div>
+            <div id="no-bottles-msg" class="empty-state" style="display:none">
+                No active bottles found for this barcode.
+            </div>
+            <div class="form-actions" id="output-actions" style="display:none">
+                <button id="confirm-dispose" class="btn btn-danger btn-large">Mark as Disposed</button>
+                <button id="cancel-output" class="btn btn-secondary">Cancel</button>
+            </div>
+        </section>
+
+        <!-- Inventory Section -->
+        <section id="inventory-section" class="card">
+            <div class="section-header">
+                <h2>Inventory</h2>
+                <span id="inventory-count" class="badge">0</span>
+            </div>
+            <div class="inventory-controls">
+                <input type="text" id="search-inventory" placeholder="Search chemicals...">
+                <select id="filter-status">
+                    <option value="active">Active</option>
+                    <option value="disposed">Disposed</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+            <div id="inventory-list"></div>
+            <div id="inventory-empty" class="empty-state">
+                No items in inventory yet. Scan a chemical to get started.
+            </div>
+        </section>
+
+        <!-- Export Section -->
+        <section id="export-section" class="card">
+            <h2>Export Spreadsheet</h2>
+            <div class="export-controls">
+                <button id="export-active" class="btn btn-primary">
+                    Export Active Inventory
+                </button>
+                <button id="export-all" class="btn btn-secondary">
+                    Export All (incl. Disposed)
+                </button>
+                <button id="export-log" class="btn btn-secondary">
+                    Export Activity Log
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" style="display:none"></div>
+
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
