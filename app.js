@@ -117,19 +117,21 @@
 
         async init() {
             if (!firebase.apps.length) {
-                // Parse config - user can paste either just URL or full JSON config
                 let config;
                 try {
                     config = JSON.parse(this.url);
                 } catch (e) {
-                    // Just a URL - build minimal config
                     config = { databaseURL: this.url };
+                }
+                // Ensure required fields exist for Firebase compat SDK
+                if (!config.apiKey) config.apiKey = 'none';
+                if (!config.projectId) {
+                    const m = (config.databaseURL || '').match(/\/\/([^.]+)/);
+                    config.projectId = m ? m[1].replace('-default-rtdb', '') : 'app';
                 }
                 firebase.initializeApp(config);
             }
             this.dbRef = firebase.database().ref();
-            // Test connection
-            await this.dbRef.child('.info/connected').once('value');
         }
 
         _encodeKey(key) {
