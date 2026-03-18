@@ -139,6 +139,9 @@
         return new Date(iso).toLocaleDateString();
     }
 
+    // ==================== Config ====================
+    const DEFAULT_GEMINI_KEY = 'AIzaSyCkwuyvaPy_wZICenFU7IblYJwdFvA6FEo';
+
     // ==================== Main App ====================
     class App {
         constructor() {
@@ -148,6 +151,10 @@
             this.mode = 'input'; // 'input' or 'output'
             this.selectedBottles = new Set();
             this.modalTarget = null; // 'names' or 'locations'
+        }
+
+        getGeminiKey() {
+            return localStorage.getItem('chem_gemini_api_key') || DEFAULT_GEMINI_KEY;
         }
 
         async init() {
@@ -561,11 +568,6 @@
                 showToast('Select your Name and Location first.', 'error');
                 return;
             }
-            const apiKey = localStorage.getItem('chem_gemini_api_key');
-            if (!apiKey) {
-                showToast('Set up your API key in Settings (gear icon) first.', 'error');
-                return;
-            }
             document.getElementById('label-capture').click();
         }
 
@@ -645,7 +647,7 @@
         }
 
         async analyzeWithGemini(imageBase64) {
-            const apiKey = localStorage.getItem('chem_gemini_api_key');
+            const apiKey = this.getGeminiKey();
             if (!apiKey) throw new Error('No API key configured');
 
             const response = await fetch(
