@@ -343,8 +343,8 @@
         async doLookup() {
             const vendor = document.getElementById('f-vendor').value.trim();
             const productNumber = document.getElementById('f-product-number').value.trim();
-            if (!vendor && !productNumber) {
-                showToast('Enter vendor and/or product number first.', 'error');
+            if (!productNumber) {
+                showToast('Enter a product number first.', 'error');
                 return;
             }
 
@@ -352,7 +352,7 @@
             const vendorLink = document.getElementById('vendor-link');
             btn.disabled = true;
             btn.textContent = 'Searching...';
-            this.setLookupStatus('Searching PubChem...', 'loading');
+            this.setLookupStatus(vendor ? 'Searching PubChem...' : 'Searching all vendors on PubChem...', 'loading');
             vendorLink.style.display = 'none';
 
             try {
@@ -363,6 +363,10 @@
                     }
                     if (result.casNumber && !document.getElementById('f-cas').value) {
                         document.getElementById('f-cas').value = result.casNumber;
+                    }
+                    // Auto-fill vendor if it was found via a specific source
+                    if (result.foundVendor && !document.getElementById('f-vendor').value) {
+                        document.getElementById('f-vendor').value = result.foundVendor;
                     }
                     this.setLookupStatus('Found: ' + (result.productName || 'info retrieved'), 'success');
                 } else {
@@ -389,11 +393,23 @@
             const numsToTry = [cleanNum];
             if (cleanNum !== productNumber) numsToTry.push(productNumber);
 
-            // Strategy 1: PubChem substance source ID lookup
+            // Strategy 1: PubChem substance source ID lookup (try each vendor)
             for (const source of sourceNames) {
                 for (const num of numsToTry) {
                     const cid = await this.pubchemSubstanceLookup(source, num);
-                    if (cid) return await this.getCompoundInfo(cid);
+                    if (cid) {
+                        const info = await this.getCompoundInfo(cid);
+                        if (info) {
+                            // Map PubChem source name back to a user-friendly vendor name
+                            const vendorMap = {
+                                'Sigma-Aldrich': 'Sigma-Aldrich', 'MilliporeSigma': 'Sigma-Aldrich',
+                                'Fisher Scientific': 'Fisher Scientific', 'Acros Organics': 'Acros Organics',
+                                'Alfa Aesar': 'Alfa Aesar', 'TCI': 'TCI', 'VWR': 'VWR'
+                            };
+                            info.foundVendor = vendorMap[source] || source;
+                        }
+                        return info;
+                    }
                 }
             }
 
@@ -407,7 +423,11 @@
         }
 
         getPubchemSources(vendor) {
-            const v = vendor.toLowerCase();
+            const v = (vendor || '').toLowerCase().trim();
+            // If no vendor specified, try all major sources
+            if (!v) {
+                return ['Sigma-Aldrich', 'MilliporeSigma', 'Fisher Scientific', 'Acros Organics', 'Alfa Aesar', 'TCI', 'VWR'];
+            }
             const names = [];
             if (v.includes('sigma') || v.includes('aldrich')) names.push('Sigma-Aldrich', 'MilliporeSigma');
             if (v.includes('millipore')) names.push('MilliporeSigma', 'Sigma-Aldrich');
@@ -416,6 +436,10 @@
             if (v.includes('alfa')) names.push('Alfa Aesar');
             if (v.includes('tci')) names.push('TCI');
             if (v.includes('vwr') || v.includes('avantor')) names.push('VWR');
+            // If vendor didn't match any known source, also try all
+            if (names.length === 0) {
+                return ['Sigma-Aldrich', 'MilliporeSigma', 'Fisher Scientific', 'Acros Organics', 'Alfa Aesar', 'TCI', 'VWR'];
+            }
             return names;
         }
 
