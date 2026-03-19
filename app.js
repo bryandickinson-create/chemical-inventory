@@ -893,6 +893,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
             document.getElementById('mode-output').addEventListener('click', () => this.setMode('output'));
             document.getElementById('mode-move').addEventListener('click', () => this.setMode('move'));
+            document.getElementById('mode-inventory').addEventListener('click', () => this.setMode('inventory'));
 
             // Manual entry
             document.getElementById('manual-submit').addEventListener('click', () => this.handleManualBarcode());
@@ -940,14 +941,19 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
             document.getElementById('mode-move').classList.toggle('active', mode === 'move');
+            document.getElementById('mode-inventory').classList.toggle('active', mode === 'inventory');
 
             // Show/hide sections based on mode
             document.getElementById('scanner-section').style.display = mode === 'input' ? '' : 'none';
-            // Only show Location dropdown in Add mode (it's the storage location for new items)
+            // Only show Location dropdown in Add mode
             document.getElementById('session-location').closest('.session-field').style.display = mode === 'input' ? '' : 'none';
             this.hideForm();
             this.hideOutputSelect();
             this.hideMoveSelect();
+
+            // Inventory & export only visible in inventory mode
+            document.getElementById('inventory-section').style.display = mode === 'inventory' ? '' : 'none';
+            document.getElementById('export-section').style.display = mode === 'inventory' ? '' : 'none';
 
             if (mode === 'output') {
                 document.getElementById('output-select').style.display = '';
@@ -964,6 +970,8 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 document.getElementById('move-destination').style.display = 'none';
                 this.populateMoveLocations();
                 document.getElementById('move-search').focus();
+            } else if (mode === 'inventory') {
+                this.refreshInventory();
             }
         }
 
