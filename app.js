@@ -937,6 +937,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
         setMode(mode) {
             this.mode = mode;
             document.body.className = 'mode-' + mode;
+            window.scrollTo(0, 0);
 
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
