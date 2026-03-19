@@ -981,60 +981,93 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             }
             input.value = '';
 
-            // If Gemini key is available, use AI to look up the chemical
-            if (this.getGeminiKey()) {
-                const snapStatus = document.getElementById('snap-status');
-                snapStatus.textContent = 'Looking up "' + query + '"...';
-                snapStatus.className = 'lookup-status loading';
+            const snapStatus = document.getElementById('snap-status');
+            snapStatus.textContent = 'Looking up "' + query + '"...';
+            snapStatus.className = 'lookup-status loading';
 
-                try {
-                    const result = await this.textLookupWithGemini(query);
-                    if (result && (result.productName || result.productNumber)) {
-                        snapStatus.textContent = 'Found: ' + (result.productName || result.productNumber);
+            try {
+                // Parse vendor hint from query (e.g. "Sigma A4034" → vendor="Sigma", num="A4034")
+                let vendor = '';
+                let productNumber = query;
+                const parts = query.match(/^(sigma|aldrich|fisher|thermo|vwr|avantor|alfa|tci|acros|millipore)\s+(.+)$/i);
+                if (parts) {
+                    vendor = parts[1];
+                    productNumber = parts[2];
+                }
+
+                // Strategy 1: PubChem lookup (accurate, real data)
+                const pubchemResult = await this.pubchemLookup(vendor, productNumber);
+                if (pubchemResult && (pubchemResult.productName || pubchemResult.casNumber)) {
+                    const result = pubchemResult;
+                    snapStatus.textContent = 'Found on PubChem: ' + (result.productName || 'info retrieved');
+                    snapStatus.className = 'lookup-status success';
+
+                    this.fillFormFromResult(result, productNumber, vendor);
+                    document.getElementById('autofill-notice').textContent = 'Auto-filled from PubChem. Verify and edit as needed.';
+                    document.getElementById('autofill-notice').style.display = '';
+
+                    if (document.getElementById('auto-submit').checked) {
+                        await this.submitChemical();
+                    }
+                    setTimeout(() => { snapStatus.textContent = ''; }, 3000);
+                    return;
+                }
+
+                // Strategy 2: Gemini AI lookup (fallback, less reliable)
+                if (this.getGeminiKey()) {
+                    snapStatus.textContent = 'Not on PubChem, asking AI...';
+                    const geminiResult = await this.textLookupWithGemini(query);
+                    if (geminiResult && (geminiResult.productName || geminiResult.productNumber)) {
+                        snapStatus.textContent = 'Found via AI: ' + (geminiResult.productName || geminiResult.productNumber);
                         snapStatus.className = 'lookup-status success';
 
-                        const form = document.getElementById('chemical-form');
-                        document.getElementById('chem-form').reset();
-                        this.setLookupStatus('');
-                        document.getElementById('vendor-link').style.display = 'none';
-
-                        const barcode = result.productNumber || query;
-                        document.getElementById('f-barcode').value = barcode;
-                        if (result.vendor) document.getElementById('f-vendor').value = result.vendor;
-                        if (result.productNumber) document.getElementById('f-product-number').value = result.productNumber;
-                        if (result.productName) document.getElementById('f-product-name').value = result.productName;
-                        if (result.casNumber) document.getElementById('f-cas').value = result.casNumber;
-                        if (result.amount) document.getElementById('f-amount').value = result.amount;
-                        if (result.unit) {
-                            const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
-                            document.getElementById('f-unit').value = unitMap[(result.unit || '').toLowerCase()] || result.unit;
-                        }
-
-                        document.getElementById('autofill-notice').textContent = 'Auto-filled from web lookup. Verify and edit as needed.';
+                        this.fillFormFromResult(geminiResult, productNumber, vendor);
+                        document.getElementById('autofill-notice').textContent = 'Auto-filled from AI lookup. Please verify — AI results may be inaccurate.';
                         document.getElementById('autofill-notice').style.display = '';
-
-                        form.style.display = '';
-                        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
                         if (document.getElementById('auto-submit').checked) {
                             await this.submitChemical();
                         }
                         setTimeout(() => { snapStatus.textContent = ''; }, 3000);
                         return;
-                    } else {
-                        snapStatus.textContent = 'Not found. Fill in manually.';
-                        snapStatus.className = 'lookup-status error';
                     }
-                } catch (e) {
-                    console.error('Text lookup failed:', e);
-                    snapStatus.textContent = 'Lookup failed. Fill in manually.';
-                    snapStatus.className = 'lookup-status error';
                 }
+
+                snapStatus.textContent = 'Not found. Fill in manually.';
+                snapStatus.className = 'lookup-status error';
+                setTimeout(() => { snapStatus.textContent = ''; }, 3000);
+            } catch (e) {
+                console.error('Lookup failed:', e);
+                snapStatus.textContent = 'Lookup failed. Fill in manually.';
+                snapStatus.className = 'lookup-status error';
                 setTimeout(() => { snapStatus.textContent = ''; }, 3000);
             }
 
-            // Fallback: just open the form with the query as barcode
+            // Open form with query pre-filled
             this.showInputForm(query);
+        }
+
+        fillFormFromResult(result, fallbackBarcode, fallbackVendor) {
+            const form = document.getElementById('chemical-form');
+            document.getElementById('chem-form').reset();
+            this.setLookupStatus('');
+            document.getElementById('vendor-link').style.display = 'none';
+
+            const barcode = result.productNumber || fallbackBarcode;
+            document.getElementById('f-barcode').value = barcode;
+            if (result.vendor || result.foundVendor) document.getElementById('f-vendor').value = result.vendor || result.foundVendor;
+            else if (fallbackVendor) document.getElementById('f-vendor').value = fallbackVendor;
+            if (result.productNumber) document.getElementById('f-product-number').value = result.productNumber;
+            if (result.productName) document.getElementById('f-product-name').value = result.productName;
+            if (result.casNumber) document.getElementById('f-cas').value = result.casNumber;
+            if (result.amount) document.getElementById('f-amount').value = result.amount;
+            if (result.unit) {
+                const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
+                document.getElementById('f-unit').value = unitMap[(result.unit || '').toLowerCase()] || result.unit;
+            }
+
+            form.style.display = '';
+            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         async textLookupWithGemini(query) {
