@@ -308,7 +308,7 @@
                 this.db = new FirebaseDB(fbUrl);
                 try {
                     await this.db.init();
-                    // Start real-time sync
+                    // Start real-time sync (poll every 10s)
                     this.db.startSync(() => {
                         this.refreshInventory();
                         this.loadSessionDropdowns();
@@ -325,15 +325,22 @@
                 await this.db.init();
             }
             this.bindEvents();
-            await this.loadSessionDropdowns();
+            try {
+                await this.loadSessionDropdowns();
+            } catch (e) {
+                console.error('loadSessionDropdowns failed:', e);
+            }
             this.restoreSession();
             this.refreshInventory();
         }
 
         // ---- Session (Name + Location) ----
         async loadSessionDropdowns() {
-            await this.populateSelect('session-name', await this.db.getList('names'));
-            await this.populateSelect('session-location', await this.db.getList('locations'));
+            const names = await this.db.getList('names');
+            const locations = await this.db.getList('locations');
+            console.log('loadSessionDropdowns:', JSON.stringify({ names, locations }));
+            this.populateSelect('session-name', names);
+            this.populateSelect('session-location', locations);
         }
 
         populateSelect(selectId, items) {
