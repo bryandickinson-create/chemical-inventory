@@ -995,15 +995,35 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                     productNumber = parts[2];
                 }
 
-                // Strategy 1: PubChem lookup (accurate, real data)
-                const pubchemResult = await this.pubchemLookup(vendor, productNumber);
-                if (pubchemResult && (pubchemResult.productName || pubchemResult.casNumber)) {
-                    const result = pubchemResult;
-                    snapStatus.textContent = 'Found on PubChem: ' + (result.productName || 'info retrieved');
+                let result = null;
+                let source = '';
+
+                // Strategy 1: Gemini with Google Search grounding (most reliable — actually searches the web)
+                if (this.getGeminiKey()) {
+                    result = await this.textLookupWithGemini(query);
+                    if (result && (result.productName || result.productNumber)) {
+                        source = 'web search';
+                    } else {
+                        result = null;
+                    }
+                }
+
+                // Strategy 2: PubChem lookup (fallback if no Gemini key or Gemini found nothing)
+                if (!result) {
+                    snapStatus.textContent = 'Searching PubChem...';
+                    const pubchemResult = await this.pubchemLookup(vendor, productNumber);
+                    if (pubchemResult && (pubchemResult.productName || pubchemResult.casNumber)) {
+                        result = pubchemResult;
+                        source = 'PubChem';
+                    }
+                }
+
+                if (result) {
+                    snapStatus.textContent = 'Found via ' + source + ': ' + (result.productName || 'info retrieved');
                     snapStatus.className = 'lookup-status success';
 
                     this.fillFormFromResult(result, productNumber, vendor);
-                    document.getElementById('autofill-notice').textContent = 'Auto-filled from PubChem. Verify and edit as needed.';
+                    document.getElementById('autofill-notice').textContent = 'Auto-filled from ' + source + '. Verify and edit as needed.';
                     document.getElementById('autofill-notice').style.display = '';
 
                     if (document.getElementById('auto-submit').checked) {
@@ -1011,26 +1031,6 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                     }
                     setTimeout(() => { snapStatus.textContent = ''; }, 3000);
                     return;
-                }
-
-                // Strategy 2: Gemini AI lookup (fallback, less reliable)
-                if (this.getGeminiKey()) {
-                    snapStatus.textContent = 'Not on PubChem, asking AI...';
-                    const geminiResult = await this.textLookupWithGemini(query);
-                    if (geminiResult && (geminiResult.productName || geminiResult.productNumber)) {
-                        snapStatus.textContent = 'Found via AI: ' + (geminiResult.productName || geminiResult.productNumber);
-                        snapStatus.className = 'lookup-status success';
-
-                        this.fillFormFromResult(geminiResult, productNumber, vendor);
-                        document.getElementById('autofill-notice').textContent = 'Auto-filled from AI lookup. Please verify — AI results may be inaccurate.';
-                        document.getElementById('autofill-notice').style.display = '';
-
-                        if (document.getElementById('auto-submit').checked) {
-                            await this.submitChemical();
-                        }
-                        setTimeout(() => { snapStatus.textContent = ''; }, 3000);
-                        return;
-                    }
                 }
 
                 snapStatus.textContent = 'Not found. Fill in manually.';
@@ -1082,22 +1082,23 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                     body: JSON.stringify({
                         contents: [{
                             parts: [{
-                                text: `Look up this chemical product: "${query}"
+                                text: `Search for this chemical product and return its details: "${query}"
 
-This could be a vendor catalog number (e.g. "A4034", "S7653"), a chemical name (e.g. "sodium chloride"), a CAS number, or a vendor + product number (e.g. "Sigma A4034").
+This could be a vendor catalog number with size (e.g. "G8270-1KG", "A4034-100G"), a plain catalog number (e.g. "S7653"), a chemical name (e.g. "sodium chloride"), a CAS number, or a vendor + product number (e.g. "Sigma A4034"). The size suffix (e.g. -1KG, -100G, -500ML) indicates the package size, not part of the product number.
 
 Return ONLY valid JSON (no markdown, no code fences):
 {
-  "vendor": "vendor/manufacturer name",
-  "productNumber": "catalog/product number",
+  "vendor": "vendor/manufacturer name (e.g. Sigma-Aldrich, Fisher Scientific)",
+  "productNumber": "catalog number WITHOUT size suffix (e.g. G8270 not G8270-1KG)",
   "productName": "chemical name",
-  "casNumber": "CAS number in format XXXXX-XX-X",
-  "amount": "common package size number (e.g. 100, 500, 1)",
-  "unit": "common package unit (g, mL, L, kg, etc.)"
+  "casNumber": "CAS registry number in format XXXXX-XX-X",
+  "amount": "package size number from the query (e.g. 1 from -1KG, 100 from -100G)",
+  "unit": "package unit (g, kg, mg, mL, L, etc.)"
 }
-If you cannot determine a field, use empty string "". Be precise with CAS number format.`
+If a field cannot be determined, use empty string "".`
                             }]
-                        }]
+                        }],
+                        tools: [{ google_search: {} }]
                     })
                 }
             );
