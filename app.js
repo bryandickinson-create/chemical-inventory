@@ -338,7 +338,6 @@
         async loadSessionDropdowns() {
             const names = await this.db.getList('names');
             const locations = await this.db.getList('locations');
-            console.log('loadSessionDropdowns:', JSON.stringify({ names, locations }));
             this.populateSelect('session-name', names);
             this.populateSelect('session-location', locations);
         }
