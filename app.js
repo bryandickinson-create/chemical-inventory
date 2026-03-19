@@ -945,6 +945,8 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
 
             // Show/hide sections based on mode
             document.getElementById('scanner-section').style.display = mode === 'input' ? '' : 'none';
+            // Show Name in Add/Remove/Move, hide in Inventory
+            document.getElementById('session-name').closest('.session-field').style.display = mode === 'inventory' ? 'none' : '';
             // Only show Location dropdown in Add mode
             document.getElementById('session-location').closest('.session-field').style.display = mode === 'input' ? '' : 'none';
             this.hideForm();
