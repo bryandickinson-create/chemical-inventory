@@ -133,6 +133,11 @@ body.mode-move .mode-btn[data-mode="move"] {
     color: white;
 }
 
+body.mode-inventory .mode-btn[data-mode="inventory"] {
+    background: var(--primary);
+    color: white;
+}
+
 /* ==================== Session Bar ==================== */
 .session-bar {
     background: white;
@@ -743,6 +748,7 @@ input[readonly] {
 /* ==================== Responsive ==================== */
 @media (min-width: 768px) {
     main {
+        max-width: 700px;
         padding: 1.5rem;
         gap: 1rem;
     }
@@ -760,8 +766,12 @@ input[readonly] {
     }
 
     .mode-toggle {
-        max-width: 320px;
+        max-width: 480px;
         margin: 0 auto;
+    }
+
+    .session-inner {
+        max-width: 700px;
     }
 
     .inv-meta {
