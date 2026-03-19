@@ -1531,22 +1531,29 @@ If you cannot determine a field, use empty string "". Be precise with CAS number
                 new Date(a.dateIn) - new Date(b.dateIn)
             );
 
-            // Build summary sheet: group by barcode, count bottles
+            // Build summary sheet: group by product number, count bottles
             const grouped = {};
             items.forEach(item => {
-                const key = item.barcode;
+                const key = item.productNumber || item.productName;
                 if (!grouped[key]) {
                     grouped[key] = {
-                        barcode: item.barcode,
                         vendor: item.vendor,
                         productNumber: item.productNumber,
                         productName: item.productName,
                         casNumber: item.casNumber,
                         amount: item.amount + ' ' + item.unit,
+                        locations: new Set(),
+                        addedBy: new Set(),
+                        expirations: new Set(),
+                        notes: [],
                         activeBottles: 0,
                         disposedBottles: 0,
                     };
                 }
+                if (item.location) grouped[key].locations.add(item.location);
+                if (item.addedBy) grouped[key].addedBy.add(item.addedBy);
+                if (item.expiration) grouped[key].expirations.add(item.expiration);
+                if (item.notes) grouped[key].notes.push(item.notes);
                 if (item.status === 'active') grouped[key].activeBottles++;
                 else grouped[key].disposedBottles++;
             });
@@ -1557,14 +1564,16 @@ If you cannot determine a field, use empty string "". Be precise with CAS number
                 'Product Name': g.productName,
                 'CAS Number': g.casNumber,
                 'Amount Per Bottle': g.amount,
+                'Location': [...g.locations].join(', '),
                 'Active Bottles': g.activeBottles,
                 'Disposed Bottles': g.disposedBottles,
-                'Barcode': g.barcode,
+                'Added By': [...g.addedBy].join(', '),
+                'Expiration': [...g.expirations].join(', '),
+                'Notes': g.notes.join('; '),
             }));
 
             // Build detail sheet: one row per bottle
             const detailData = items.map(item => ({
-                'Bottle ID': item.id.split('-')[0],
                 'Vendor': item.vendor,
                 'Product Number': item.productNumber,
                 'Product Name': item.productName,
@@ -1579,7 +1588,6 @@ If you cannot determine a field, use empty string "". Be precise with CAS number
                 'Removed By': item.removedBy || '',
                 'Date Removed': item.dateOut ? formatDate(item.dateOut) : '',
                 'Notes': item.notes || '',
-                'Barcode': item.barcode,
             }));
 
             const wb = XLSX.utils.book_new();
