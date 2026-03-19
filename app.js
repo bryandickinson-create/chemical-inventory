@@ -964,7 +964,6 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 document.getElementById('matching-bottles').innerHTML = '';
                 document.getElementById('no-bottles-msg').style.display = 'none';
                 document.getElementById('output-actions').style.display = 'none';
-                document.getElementById('output-search').focus();
             } else if (mode === 'move') {
                 document.getElementById('move-select').style.display = '';
                 document.getElementById('move-search').value = '';
@@ -972,7 +971,6 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 document.getElementById('move-no-msg').style.display = 'none';
                 document.getElementById('move-destination').style.display = 'none';
                 this.populateMoveLocations();
-                document.getElementById('move-search').focus();
             } else if (mode === 'inventory') {
                 this.refreshInventory();
             }
