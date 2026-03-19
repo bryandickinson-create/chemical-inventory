@@ -1445,6 +1445,23 @@ If a field cannot be determined, use empty string "".`
             const search = document.getElementById('search-inventory').value.toLowerCase().trim();
             const filterStatus = document.getElementById('filter-status').value;
 
+            // Update count badge
+            const activeCount = allItems.filter(i => i.status === 'active').length;
+            document.getElementById('inventory-count').textContent = activeCount;
+
+            const listEl = document.getElementById('inventory-list');
+            const emptyEl = document.getElementById('inventory-empty');
+
+            // Require search query to show results (avoid loading hundreds of items)
+            if (search.length < 2) {
+                listEl.innerHTML = '';
+                emptyEl.style.display = '';
+                emptyEl.textContent = activeCount > 0
+                    ? activeCount + ' item' + (activeCount !== 1 ? 's' : '') + ' in inventory. Type to search.'
+                    : 'No items in inventory yet. Scan a chemical to get started.';
+                return;
+            }
+
             let items = allItems;
 
             // Filter by status
@@ -1453,18 +1470,15 @@ If a field cannot be determined, use empty string "".`
             }
 
             // Search
-            if (search) {
-                items = items.filter(i =>
-                    (i.productName || '').toLowerCase().includes(search) ||
-                    (i.vendor || '').toLowerCase().includes(search) ||
-                    (i.productNumber || '').toLowerCase().includes(search) ||
-                    (i.casNumber || '').toLowerCase().includes(search) ||
-                    (i.barcode || '').toLowerCase().includes(search) ||
-                    (i.location || '').toLowerCase().includes(search) ||
-                    (i.addedBy || '').toLowerCase().includes(search) ||
-                    (i.notes || '').toLowerCase().includes(search)
-                );
-            }
+            items = items.filter(i =>
+                (i.productName || '').toLowerCase().includes(search) ||
+                (i.vendor || '').toLowerCase().includes(search) ||
+                (i.productNumber || '').toLowerCase().includes(search) ||
+                (i.casNumber || '').toLowerCase().includes(search) ||
+                (i.location || '').toLowerCase().includes(search) ||
+                (i.addedBy || '').toLowerCase().includes(search) ||
+                (i.notes || '').toLowerCase().includes(search)
+            );
 
             // Sort: active first, then by dateIn descending
             items.sort((a, b) => {
@@ -1472,22 +1486,10 @@ If a field cannot be determined, use empty string "".`
                 return new Date(b.dateIn) - new Date(a.dateIn);
             });
 
-            // Update count badge
-            const activeCount = allItems.filter(i => i.status === 'active').length;
-            document.getElementById('inventory-count').textContent = activeCount;
-
-            // Render
-            const listEl = document.getElementById('inventory-list');
-            const emptyEl = document.getElementById('inventory-empty');
-
             if (items.length === 0) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = '';
-                emptyEl.textContent = search
-                    ? 'No results for "' + search + '".'
-                    : filterStatus === 'disposed'
-                        ? 'No disposed items.'
-                        : 'No items in inventory yet. Scan a chemical to get started.';
+                emptyEl.textContent = 'No results for "' + search + '".';
                 return;
             }
 
