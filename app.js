@@ -107,31 +107,25 @@
         }
     }
 
-    // ==================== Firebase Database ====================
+    // ==================== Firebase Database (REST API) ====================
     class FirebaseDB {
         constructor(url) {
             this.url = url;
-            this.dbRef = null;
-            this.onChangeCallback = null;
+            this.baseUrl = '';
+            this.pollInterval = null;
         }
 
         async init() {
-            if (!firebase.apps.length) {
-                let config;
-                try {
-                    config = JSON.parse(this.url);
-                } catch (e) {
-                    config = { databaseURL: this.url };
-                }
-                // Ensure required fields exist for Firebase compat SDK
-                if (!config.apiKey) config.apiKey = 'none';
-                if (!config.projectId) {
-                    const m = (config.databaseURL || '').match(/\/\/([^.]+)/);
-                    config.projectId = m ? m[1].replace('-default-rtdb', '') : 'app';
-                }
-                firebase.initializeApp(config);
+            let config;
+            try {
+                config = JSON.parse(this.url);
+            } catch (e) {
+                config = { databaseURL: this.url };
             }
-            this.dbRef = firebase.database().ref();
+            this.baseUrl = (config.databaseURL || this.url).replace(/\/+$/, '');
+            // Test connection
+            const resp = await fetch(this.baseUrl + '/.json');
+            if (!resp.ok) throw new Error('Firebase connection failed: ' + resp.status);
         }
 
         _encodeKey(key) {
@@ -139,48 +133,70 @@
             return (key || '').replace(/[.$/\[\]#]/g, '_');
         }
 
+        async _get(path) {
+            const resp = await fetch(this.baseUrl + '/' + path + '.json');
+            if (!resp.ok) throw new Error('Firebase read failed: ' + resp.status);
+            return resp.json();
+        }
+
+        async _set(path, data) {
+            const resp = await fetch(this.baseUrl + '/' + path + '.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!resp.ok) throw new Error('Firebase write failed: ' + resp.status);
+            return resp.json();
+        }
+
+        async _delete(path) {
+            const resp = await fetch(this.baseUrl + '/' + path + '.json', {
+                method: 'DELETE'
+            });
+            if (!resp.ok) throw new Error('Firebase delete failed: ' + resp.status);
+        }
+
         // -- Managed lists (names, locations) --
         async getList(key) {
-            const snap = await this.dbRef.child('lists').child(key).child('items').once('value');
-            return snap.val() || [];
+            const data = await this._get('lists/' + key + '/items');
+            return data || [];
         }
 
         async saveList(key, items) {
-            return this.dbRef.child('lists').child(key).set({ items });
+            return this._set('lists/' + key, { items });
         }
 
         // -- Chemical templates --
         async getChemical(barcode) {
-            const snap = await this.dbRef.child('chemicals').child(this._encodeKey(barcode)).once('value');
-            return snap.val() || undefined;
+            const data = await this._get('chemicals/' + this._encodeKey(barcode));
+            return data || undefined;
         }
 
         async saveChemical(data) {
-            return this.dbRef.child('chemicals').child(this._encodeKey(data.barcode)).set(data);
+            return this._set('chemicals/' + this._encodeKey(data.barcode), data);
         }
 
         // -- Inventory items --
         async addItem(item) {
-            return this.dbRef.child('inventory').child(item.id).set(item);
+            return this._set('inventory/' + item.id, item);
         }
 
         async getItem(id) {
-            const snap = await this.dbRef.child('inventory').child(id).once('value');
-            return snap.val() || undefined;
+            const data = await this._get('inventory/' + id);
+            return data || undefined;
         }
 
         async updateItem(item) {
-            return this.dbRef.child('inventory').child(item.id).set(item);
+            return this._set('inventory/' + item.id, item);
         }
 
         async deleteItem(id) {
-            return this.dbRef.child('inventory').child(id).remove();
+            return this._delete('inventory/' + id);
         }
 
         async getAllItems() {
-            const snap = await this.dbRef.child('inventory').once('value');
-            const val = snap.val();
-            return val ? Object.values(val) : [];
+            const data = await this._get('inventory');
+            return data ? Object.values(data) : [];
         }
 
         async getItemsByBarcode(barcode) {
@@ -193,22 +209,14 @@
             return items.filter(i => i.status === 'active');
         }
 
-        // Real-time sync: call callback whenever inventory changes
+        // Poll for changes every 10 seconds instead of WebSocket
         startSync(callback) {
-            this.onChangeCallback = callback;
-            this.dbRef.child('inventory').on('value', () => {
-                if (this.onChangeCallback) this.onChangeCallback();
-            });
-            // Also sync lists
-            this.dbRef.child('lists').on('value', () => {
-                if (this.onChangeCallback) this.onChangeCallback();
-            });
+            this.pollInterval = setInterval(callback, 10000);
         }
 
         stopSync() {
-            this.dbRef.child('inventory').off();
-            this.dbRef.child('lists').off();
-            this.onChangeCallback = null;
+            if (this.pollInterval) clearInterval(this.pollInterval);
+            this.pollInterval = null;
         }
     }
 
