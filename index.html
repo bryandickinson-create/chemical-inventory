@@ -70,6 +70,15 @@
                     <div id="firebase-url-status" class="settings-hint" style="margin-top:0.35rem"></div>
                 </div>
                 <div class="form-group" style="margin-top:1rem">
+                    <label for="lab-key-input">Lab Key (Password)</label>
+                    <p class="settings-hint">A shared password for your lab. Everyone in your lab must use the same key. This protects your data from unauthorized access.</p>
+                    <div class="input-row">
+                        <input type="password" id="lab-key-input" placeholder="Enter a shared lab password...">
+                        <button id="save-lab-key" class="btn btn-primary">Save</button>
+                    </div>
+                    <div id="lab-key-status" class="settings-hint" style="margin-top:0.35rem"></div>
+                </div>
+                <div class="form-group" style="margin-top:1rem">
                     <label for="api-key-input">Google Gemini API Key</label>
                     <p class="settings-hint">Required for "Snap Label" feature. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> — only needs to be entered once per device.</p>
                     <div class="input-row">
@@ -268,6 +277,6 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=24"></script>
+    <script src="app.js?v=25"></script>
 </body>
 </html>

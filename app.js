@@ -109,13 +109,15 @@
 
     // ==================== Firebase Database (REST API) ====================
     class FirebaseDB {
-        constructor(url) {
+        constructor(url, labKey) {
             this.url = url;
+            this.labKey = labKey || '';
             this.baseUrl = '';
             this.pollInterval = null;
         }
 
         async init() {
+            if (!this.labKey) throw new Error('Lab Key is required. Set it in Settings.');
             let config;
             try {
                 config = JSON.parse(this.url);
@@ -123,9 +125,21 @@
                 config = { databaseURL: this.url };
             }
             this.baseUrl = (config.databaseURL || this.url).replace(/\/+$/, '');
+            // Use hashed lab key as path prefix for security
+            const keyHash = await this._hashKey(this.labKey);
+            this.baseUrl = this.baseUrl + '/lab_' + keyHash;
             // Test connection
             const resp = await fetch(this.baseUrl + '/.json');
             if (!resp.ok) throw new Error('Firebase connection failed: ' + resp.status);
+        }
+
+        async _hashKey(key) {
+            // Simple hash to avoid exposing the actual password in the URL path
+            const encoder = new TextEncoder();
+            const data = encoder.encode(key);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
         }
 
         _encodeKey(key) {
@@ -301,11 +315,16 @@
             return localStorage.getItem('chem_firebase_url') || '';
         }
 
+        getLabKey() {
+            return localStorage.getItem('chem_lab_key') || '';
+        }
+
         async init() {
             // Use Firebase if URL is configured, otherwise fall back to IndexedDB
             const fbUrl = this.getFirebaseUrl();
+            const labKey = this.getLabKey();
             if (fbUrl) {
-                this.db = new FirebaseDB(fbUrl);
+                this.db = new FirebaseDB(fbUrl, labKey);
                 try {
                     await this.db.init();
                     // Start real-time sync (poll every 10s)
@@ -652,6 +671,13 @@
             fbInput.value = fbSaved || '';
             fbStatus.textContent = fbSaved ? 'Connected to shared database.' : '';
             fbStatus.style.color = fbSaved ? 'var(--success)' : '';
+            // Lab Key
+            const lkInput = document.getElementById('lab-key-input');
+            const lkStatus = document.getElementById('lab-key-status');
+            const lkSaved = this.getLabKey();
+            lkInput.value = lkSaved || '';
+            lkStatus.textContent = lkSaved ? 'Lab key is set.' : 'Required for database access.';
+            lkStatus.style.color = lkSaved ? 'var(--success)' : 'var(--danger)';
             document.getElementById('settings-modal').style.display = '';
         }
 
@@ -687,6 +713,21 @@
                 status.style.color = 'var(--success)';
             }
             showToast(url ? 'Firebase URL saved. Reload to connect.' : 'Firebase removed.', 'success');
+        }
+
+        saveLabKey() {
+            const key = document.getElementById('lab-key-input').value.trim();
+            const status = document.getElementById('lab-key-status');
+            if (!key) {
+                localStorage.removeItem('chem_lab_key');
+                status.textContent = 'Key removed.';
+                status.style.color = 'var(--danger)';
+            } else {
+                localStorage.setItem('chem_lab_key', key);
+                status.textContent = 'Lab key saved! Reload to apply.';
+                status.style.color = 'var(--success)';
+            }
+            showToast(key ? 'Lab key saved. Reload to apply.' : 'Lab key removed.', 'success');
         }
 
         // ---- Snap Label (AI Vision) ----
@@ -879,6 +920,10 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             document.getElementById('save-firebase-url').addEventListener('click', () => this.saveFirebaseUrl());
             document.getElementById('firebase-url-input').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); this.saveFirebaseUrl(); }
+            });
+            document.getElementById('save-lab-key').addEventListener('click', () => this.saveLabKey());
+            document.getElementById('lab-key-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); this.saveLabKey(); }
             });
 
             // Snap Label
