@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dickinson Group Inventory (Beta)</title>
+    <meta name="theme-color" content="#2563eb">
+    <meta name="color-scheme" content="light dark">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Inventory">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="mode-input">
+    <header>
+        <div class="header-top">
+            <h1>Dickinson Group Inventory <span class="beta-tag">Beta</span></h1>
+            <span id="sync-status" class="sync-status"></span>
+            <button id="settings-btn" class="settings-btn" title="Settings">&#9881;</button>
+        </div>
+        <div class="mode-toggle">
+            <button id="mode-input" class="mode-btn active" data-mode="input">
+                <span class="mode-icon">+</span> Add
+            </button>
+            <button id="mode-output" class="mode-btn" data-mode="output">
+                <span class="mode-icon">&minus;</span> Remove
+            </button>
+            <button id="mode-move" class="mode-btn" data-mode="move">
+                <span class="mode-icon">&#x21C4;</span> Move
+            </button>
+            <button id="mode-inventory" class="mode-btn" data-mode="inventory">
+                <span class="mode-icon">&#x2630;</span> Inventory
+            </button>
+        </div>
+    </header>
+
+    <!-- Session Bar -->
+    <section id="session-bar" class="session-bar">
+        <div class="session-inner">
+            <div class="session-field">
+                <label for="session-name">Name</label>
+                <div class="session-select-row">
+                    <select id="session-name">
+                        <option value="">-- Select --</option>
+                    </select>
+                    <button id="edit-names" class="btn btn-sm btn-secondary" title="Edit names">Edit</button>
+                </div>
+            </div>
+            <div class="session-field">
+                <label for="session-location">Location</label>
+                <div class="session-select-row">
+                    <select id="session-location">
+                        <option value="">-- Select --</option>
+                    </select>
+                    <button id="edit-locations" class="btn btn-sm btn-secondary" title="Edit locations">Edit</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button id="settings-close" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="firebase-url-input">Firebase Config</label>
+                    <p class="settings-hint">Paste the Firebase config JSON from Project Settings → Your Apps → Web app config. Or just the database URL.</p>
+                    <div class="input-row">
+                        <input type="text" id="firebase-url-input" placeholder='{"apiKey":"...","databaseURL":"https://..."}'>
+                        <button id="save-firebase-url" class="btn btn-primary">Save</button>
+                    </div>
+                    <div id="firebase-url-status" class="settings-hint" style="margin-top:0.35rem"></div>
+                </div>
+                <div class="form-group" style="margin-top:1rem">
+                    <label for="lab-key-input">Lab Key (Password)</label>
+                    <p class="settings-hint">A shared password for your lab. Everyone in your lab must use the same key. This protects your data from unauthorized access.</p>
+                    <div class="input-row">
+                        <input type="password" id="lab-key-input" placeholder="Enter a shared lab password...">
+                        <button id="save-lab-key" class="btn btn-primary">Save</button>
+                    </div>
+                    <div id="lab-key-status" class="settings-hint" style="margin-top:0.35rem"></div>
+                </div>
+                <div class="form-group" style="margin-top:1rem">
+                    <label for="api-key-input">Google Gemini API Key</label>
+                    <p class="settings-hint">Required for "Snap Label" feature. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> — only needs to be entered once per device.</p>
+                    <div class="input-row">
+                        <input type="password" id="api-key-input" placeholder="Paste API key here...">
+                        <button id="save-api-key" class="btn btn-primary">Save</button>
+                    </div>
+                    <div id="api-key-status" class="settings-hint" style="margin-top:0.35rem"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- List Edit Modal -->
+    <div id="list-modal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Edit List</h3>
+                <button id="modal-close" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="input-row">
+                    <input type="text" id="modal-new-item" placeholder="Add new entry...">
+                    <button id="modal-add" class="btn btn-primary">Add</button>
+                </div>
+                <ul id="modal-list" class="modal-list"></ul>
+                <div id="modal-empty" class="empty-state" style="padding:1rem">No entries yet.</div>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <!-- Scanner Section -->
+        <section id="scanner-section" class="card">
+            <h2 id="scanner-title">Add Chemical</h2>
+            <div class="scanner-controls">
+                <button id="snap-label" class="btn btn-primary btn-large">
+                    <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
+                </button>
+                <input type="file" id="label-capture" accept="image/*" capture="environment" style="display:none">
+                <label class="auto-submit-toggle">
+                    <input type="checkbox" id="auto-submit"> Auto-add (skip review)
+                </label>
+                <div id="snap-status" class="lookup-status" style="text-align:center;margin-top:0.5rem"></div>
+            </div>
+            <div class="divider"><span>or enter manually</span></div>
+            <div class="input-row">
+                <input type="text" id="manual-barcode" placeholder="Product #, name, CAS, or vendor + #">
+                <button id="manual-submit" class="btn btn-primary">Go</button>
+            </div>
+        </section>
+
+        <!-- Chemical Form (Input Mode) -->
+        <section id="chemical-form" class="card" style="display:none">
+            <h2 id="form-title">Add Chemical to Inventory</h2>
+            <div id="autofill-notice" class="notice" style="display:none">
+                Auto-filled from previous scan. Verify and edit as needed.
+            </div>
+            <form id="chem-form">
+                <div class="form-group">
+                    <label for="f-barcode">Search Term</label>
+                    <input type="text" id="f-barcode" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="f-vendor">Vendor *</label>
+                    <input type="text" id="f-vendor" placeholder="e.g., Sigma-Aldrich, Fisher Scientific" required>
+                </div>
+                <div class="form-group">
+                    <label for="f-product-number">Product Number *</label>
+                    <input type="text" id="f-product-number" placeholder="e.g., S7653" required>
+                </div>
+                <div id="lookup-row" class="lookup-row">
+                    <button type="button" id="lookup-btn" class="btn btn-sm btn-primary">Look Up Info</button>
+                    <span id="lookup-status" class="lookup-status"></span>
+                    <a id="vendor-link" href="#" target="_blank" class="btn btn-sm btn-secondary" style="display:none">Open Vendor Page</a>
+                </div>
+                <div class="form-group">
+                    <label for="f-product-name">Product Name *</label>
+                    <input type="text" id="f-product-name" placeholder="e.g., Sodium Chloride (auto-filled by Look Up)" required>
+                </div>
+                <div class="form-group">
+                    <label for="f-cas">CAS Number</label>
+                    <input type="text" id="f-cas" placeholder="e.g., 7647-14-5 (auto-filled by Look Up)">
+                </div>
+                <div class="form-row">
+                    <div class="form-group flex-2">
+                        <label for="f-amount">Amount *</label>
+                        <input type="text" id="f-amount" placeholder="e.g., 500" required>
+                    </div>
+                    <div class="form-group flex-1">
+                        <label for="f-unit">Unit</label>
+                        <select id="f-unit">
+                            <option value="g">g</option>
+                            <option value="kg">kg</option>
+                            <option value="mg">mg</option>
+                            <option value="mL" selected>mL</option>
+                            <option value="L">L</option>
+                            <option value="uL">&micro;L</option>
+                            <option value="oz">oz</option>
+                            <option value="lb">lb</option>
+                            <option value="each">each</option>
+                            <option value="box">box</option>
+                            <option value="pack">pack</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="f-expiration">Expiration Date</label>
+                    <input type="date" id="f-expiration">
+                </div>
+                <div class="form-group">
+                    <label for="f-notes">Notes</label>
+                    <input type="text" id="f-notes" placeholder="e.g., Lot #, special storage">
+                </div>
+                <div class="form-group">
+                    <label for="f-location">Location</label>
+                    <select id="f-location">
+                        <option value="">-- Use session location --</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" id="form-submit" class="btn btn-success btn-large">Add to Inventory</button>
+                    <button type="button" id="cancel-form" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Remove Mode -->
+        <section id="output-select" class="card" style="display:none">
+            <h2>Remove from Inventory</h2>
+            <div class="form-group">
+                <input type="text" id="output-search" placeholder="Search by name, product #, CAS, vendor, location...">
+            </div>
+            <div id="matching-bottles"></div>
+            <div id="no-bottles-msg" class="empty-state" style="display:none">
+                No active bottles found.
+            </div>
+            <div class="form-actions" id="output-actions" style="display:none">
+                <button id="confirm-dispose" class="btn btn-danger btn-large">Mark as Disposed</button>
+            </div>
+        </section>
+
+        <!-- Move Mode -->
+        <section id="move-select" class="card" style="display:none">
+            <h2>Move Chemical</h2>
+            <div class="form-group">
+                <input type="text" id="move-search" placeholder="Search by name, product #, CAS, vendor, location...">
+            </div>
+            <div id="move-bottles"></div>
+            <div id="move-no-msg" class="empty-state" style="display:none">
+                No active bottles found.
+            </div>
+            <div id="move-destination" style="display:none">
+                <div class="form-group" style="margin-top:0.75rem">
+                    <label for="move-location">New Location</label>
+                    <select id="move-location">
+                        <option value="">-- Select destination --</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button id="confirm-move" class="btn btn-primary btn-large">Move Selected</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Inventory Section -->
+        <section id="inventory-section" class="card" style="display:none">
+            <div class="section-header">
+                <h2>Inventory</h2>
+                <span id="inventory-count" class="badge">0</span>
+            </div>
+            <div class="inventory-controls">
+                <input type="text" id="search-inventory" placeholder="Search chemicals...">
+                <select id="filter-status">
+                    <option value="active">Active</option>
+                    <option value="expiring">Expiring</option>
+                    <option value="disposed">Disposed</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+            <div class="inventory-controls">
+                <select id="filter-location">
+                    <option value="">All locations</option>
+                </select>
+            </div>
+            <div id="expiry-banner" class="warn-banner" style="display:none"></div>
+            <div id="inventory-list"></div>
+            <div id="inventory-empty" class="empty-state">
+                No items in inventory yet. Scan a chemical to get started.
+            </div>
+        </section>
+
+        <!-- Export Section -->
+        <section id="export-section" class="card" style="display:none">
+            <h2>Export Spreadsheet</h2>
+            <div class="export-controls">
+                <button id="export-active" class="btn btn-primary">
+                    Export Active Inventory
+                </button>
+                <button id="export-all" class="btn btn-secondary">
+                    Export All (incl. Disposed)
+                </button>
+                <button id="export-log" class="btn btn-secondary">
+                    Export Activity Log
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" style="display:none"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="app.js?v=26"></script>
+    <script>
+        // Offline app shell. Registered after load so it never delays first paint.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .catch(err => console.warn('Service worker registration failed:', err));
+            });
+        }
+    </script>
+</body>
+</html>
