@@ -9,8 +9,9 @@
     'use strict';
 
     // Gemini model used for both label vision and web-grounded text lookup.
-    // Change here to try a newer model.
-    const GEMINI_MODEL = 'gemini-2.5-flash';
+    // Change here to try a different model; gemini-2.5-flash is the previous
+    // known-good value if a newer one reads labels worse.
+    const GEMINI_MODEL = 'gemini-3.6-flash';
 
     // ==================== Database ====================
     class ChemDB {
@@ -1168,9 +1169,26 @@
             }
         }
 
-        async analyzeWithGemini(image) {
+        // Single place the Gemini endpoint and credentials are assembled.
+        // The key goes in a header rather than the URL: query strings end up in
+        // browser history, proxy logs, and crash reports; headers don't.
+        geminiRequest(body) {
             const apiKey = this.getGeminiKey();
             if (!apiKey) throw new Error('No API key configured');
+            return fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-goog-api-key': apiKey,
+                    },
+                    body: JSON.stringify(body),
+                }
+            );
+        }
+
+        async analyzeWithGemini(image) {
 
             // A response schema makes the model return parseable JSON by
             // construction, instead of asking for JSON in the prompt and
@@ -1178,16 +1196,11 @@
             const fields = ['vendor', 'productNumber', 'productName', 'casNumber',
                 'amount', 'unit', 'lotNumber', 'expiration'];
 
-            const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                {
-                                    text: `Read this chemical product label image and extract:
+            const response = await this.geminiRequest({
+                contents: [{
+                    parts: [
+                        {
+                            text: `Read this chemical product label image and extract:
 - vendor: manufacturer or vendor name (e.g. Sigma-Aldrich, Fisher Scientific, Alfa Aesar)
 - productNumber: catalog or product number
 - productName: chemical or product name
@@ -1198,26 +1211,24 @@
 - expiration: expiration date as YYYY-MM-DD if visible
 
 Use an empty string for any field that is not visible or cannot be determined. Do not guess.`
-                                },
-                                {
-                                    inlineData: {
-                                        mimeType: image.mimeType,
-                                        data: image.data
-                                    }
-                                }
-                            ]
-                        }],
-                        generationConfig: {
-                            responseMimeType: 'application/json',
-                            responseSchema: {
-                                type: 'OBJECT',
-                                properties: fields.reduce((acc, f) => (acc[f] = { type: 'STRING' }, acc), {}),
-                                required: fields,
-                            },
+                        },
+                        {
+                            inlineData: {
+                                mimeType: image.mimeType,
+                                data: image.data
+                            }
                         }
-                    })
+                    ]
+                }],
+                generationConfig: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: 'OBJECT',
+                        properties: fields.reduce((acc, f) => (acc[f] = { type: 'STRING' }, acc), {}),
+                        required: fields,
+                    },
                 }
-            );
+            });
 
             if (!response.ok) {
                 const err = await response.json().catch(() => ({}));
@@ -1502,18 +1513,14 @@ Use an empty string for any field that is not visible or cannot be determined. D
         }
 
         async textLookupWithGemini(query) {
-            const apiKey = this.getGeminiKey();
-            if (!apiKey) return null;
+            // Unlike the label scan, a missing key here is not an error — the
+            // caller falls back to PubChem.
+            if (!this.getGeminiKey()) return null;
 
-            const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [{
-                                text: `Search for this chemical product and return its details: "${query}"
+            const response = await this.geminiRequest({
+                contents: [{
+                    parts: [{
+                        text: `Search for this chemical product and return its details: "${query}"
 
 This could be a vendor catalog number with size (e.g. "G8270-1KG", "A4034-100G"), a plain catalog number (e.g. "S7653"), a chemical name (e.g. "sodium chloride"), a CAS number, or a vendor + product number (e.g. "Sigma A4034"). The size suffix (e.g. -1KG, -100G, -500ML) indicates the package size, not part of the product number.
 
@@ -1527,12 +1534,10 @@ Return ONLY valid JSON (no markdown, no code fences):
   "unit": "package unit (g, kg, mg, mL, L, etc.)"
 }
 If a field cannot be determined, use empty string "".`
-                            }]
-                        }],
-                        tools: [{ google_search: {} }]
-                    })
-                }
-            );
+                    }]
+                }],
+                tools: [{ google_search: {} }]
+            });
 
             if (!response.ok) return null;
             const data = await response.json();
