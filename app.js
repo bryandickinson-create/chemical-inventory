@@ -987,6 +987,11 @@
             lkInput.value = lkSaved || '';
             lkStatus.textContent = lkSaved ? 'Lab key is set.' : 'Required for database access.';
             lkStatus.style.color = lkSaved ? 'var(--success)' : 'var(--danger)';
+            // Always reopen masked, so a revealed key isn't left on screen.
+            document.querySelectorAll('.reveal-btn').forEach(btn => {
+                document.getElementById(btn.dataset.reveals).type = 'password';
+                btn.textContent = 'Show';
+            });
             document.getElementById('settings-modal').style.display = '';
         }
 
@@ -1280,6 +1285,17 @@ Use an empty string for any field that is not visible or cannot be determined. D
             document.getElementById('firebase-url-input').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); this.saveFirebaseUrl(); }
             });
+            // Reveal toggles — the only way to read an existing key off a
+            // working device when setting up a new one.
+            document.querySelectorAll('.reveal-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const input = document.getElementById(btn.dataset.reveals);
+                    const hidden = input.type === 'password';
+                    input.type = hidden ? 'text' : 'password';
+                    btn.textContent = hidden ? 'Hide' : 'Show';
+                });
+            });
+
             document.getElementById('save-lab-key').addEventListener('click', () => this.saveLabKey());
             document.getElementById('lab-key-input').addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); this.saveLabKey(); }

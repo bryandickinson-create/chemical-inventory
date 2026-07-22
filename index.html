@@ -81,6 +81,7 @@
                     <p class="settings-hint">A shared password for your lab. Everyone in your lab must use the same key. This protects your data from unauthorized access.</p>
                     <div class="input-row">
                         <input type="password" id="lab-key-input" placeholder="Enter a shared lab password...">
+                        <button type="button" class="btn btn-secondary btn-sm reveal-btn" data-reveals="lab-key-input">Show</button>
                         <button id="save-lab-key" class="btn btn-primary">Save</button>
                     </div>
                     <div id="lab-key-status" class="settings-hint" style="margin-top:0.35rem"></div>
@@ -90,10 +91,14 @@
                     <p class="settings-hint">Required for "Snap Label" feature. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> — only needs to be entered once per device.</p>
                     <div class="input-row">
                         <input type="password" id="api-key-input" placeholder="Paste API key here...">
+                        <button type="button" class="btn btn-secondary btn-sm reveal-btn" data-reveals="api-key-input">Show</button>
                         <button id="save-api-key" class="btn btn-primary">Save</button>
                     </div>
                     <div id="api-key-status" class="settings-hint" style="margin-top:0.35rem"></div>
                 </div>
+                <p class="settings-hint" style="margin-top:1.25rem;text-align:center">
+                    <a href="setup.html" target="_blank">Setting up a new device? Read the setup guide &rarr;</a>
+                </p>
             </div>
         </div>
     </div>
@@ -297,7 +302,7 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=26"></script>
+    <script src="app.js?v=27"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {

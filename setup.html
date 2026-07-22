@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setup Guide — Dickinson Group Inventory</title>
+<meta name="theme-color" content="#2563eb">
+<meta name="color-scheme" content="light dark">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<style>
+:root {
+    --primary: #2563eb;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --warn-light: #fef3c7;
+    --warn-border: #fcd34d;
+    --warn-text: #92400e;
+    --info-light: #eff6ff;
+    --info-border: #bfdbfe;
+    --info-text: #1e40af;
+    --surface: #ffffff;
+    --page-bg: #f3f4f6;
+    --text: #111827;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --code-bg: #f9fafb;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --primary: #3b82f6;
+        --success: #22c55e;
+        --danger: #ef4444;
+        --warn-light: #3a2a08;
+        --warn-border: #78350f;
+        --warn-text: #fcd34d;
+        --info-light: #16233d;
+        --info-border: #1e3a8a;
+        --info-text: #93c5fd;
+        --surface: #171a21;
+        --page-bg: #0f1116;
+        --text: #f4f6fa;
+        --muted: #a2abbc;
+        --line: #2f3542;
+        --code-bg: #1c2028;
+    }
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--page-bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 1rem;
+    padding-bottom: 4rem;
+}
+main { max-width: 44rem; margin: 0 auto; }
+header.page {
+    text-align: center;
+    padding: 1.5rem 0 0.5rem;
+}
+header.page h1 { font-size: 1.6rem; letter-spacing: -0.02em; }
+header.page p { color: var(--muted); margin-top: 0.35rem; }
+.card {
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 1.25rem 1.35rem;
+    margin-top: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+@media (prefers-color-scheme: dark) {
+    .card { box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+}
+h2 {
+    font-size: 1.15rem;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+h2 .num {
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 700;
+    width: 1.7rem; height: 1.7rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+h3 { font-size: 0.98rem; margin: 1rem 0 0.4rem; }
+p + p { margin-top: 0.6rem; }
+ol, ul { margin: 0.5rem 0 0.5rem 1.3rem; }
+li { margin-bottom: 0.4rem; }
+code, .val {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    font-size: 0.88em;
+    overflow-wrap: anywhere;
+}
+pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.75rem;
+    overflow-x: auto;
+    margin: 0.6rem 0;
+}
+pre code { background: none; border: none; padding: 0; font-size: 0.82rem; }
+.note {
+    border-radius: 6px;
+    padding: 0.7rem 0.9rem;
+    margin: 0.85rem 0;
+    font-size: 0.92rem;
+}
+.note.warn { background: var(--warn-light); border: 1px solid var(--warn-border); color: var(--warn-text); }
+.note.info { background: var(--info-light); border: 1px solid var(--info-border); color: var(--info-text); }
+.note strong { font-weight: 700; }
+.need {
+    border-top: 1px solid var(--line);
+    padding: 0.8rem 0 0.2rem;
+}
+.need:first-of-type { margin-top: 0.4rem; }
+.need-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.2rem;
+}
+.need-name { font-weight: 700; }
+.need p { color: var(--muted); font-size: 0.93rem; }
+.tag {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.tag.shared { background: var(--info-light); color: var(--info-text); border: 1px solid var(--info-border); }
+.tag.personal { background: var(--warn-light); color: var(--warn-text); border: 1px solid var(--warn-border); }
+a { color: var(--primary); }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.back { display: inline-block; margin-top: 1.5rem; font-weight: 600; }
+kbd {
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    font-size: 0.85em;
+    background: var(--code-bg);
+}
+</style>
+</head>
+<body>
+<main>
+
+<header class="page">
+    <h1>Setting up the Inventory app</h1>
+    <p>What to enter on each new phone, tablet, or computer</p>
+</header>
+
+<div class="card">
+    <h2><span class="num">i</span> What you'll need</h2>
+    <p>Every device needs the same two values so it talks to the same shared database. A third value is optional and personal to each device.</p>
+    <div class="need">
+        <div class="need-head">
+            <span class="need-name">Firebase Config</span>
+            <span class="tag shared">Same for everyone</span>
+        </div>
+        <p>Points the app at your lab's shared database.</p>
+    </div>
+    <div class="need">
+        <div class="need-head">
+            <span class="need-name">Lab Key</span>
+            <span class="tag shared">Same for everyone</span>
+        </div>
+        <p>A shared password. Devices with different keys see different, separate inventories.</p>
+    </div>
+    <div class="need">
+        <div class="need-head">
+            <span class="need-name">Gemini API Key</span>
+            <span class="tag personal">Per device · optional</span>
+        </div>
+        <p>Powers "Snap Label". Without it, everything else still works.</p>
+    </div>
+    <div class="note warn">
+        <strong>Don't know your Firebase Config or Lab Key?</strong>
+        Section 1 below shows how to read them off a device that's already working.
+    </div>
+</div>
+
+<div class="card">
+    <h2><span class="num">1</span> Find your existing settings</h2>
+    <p>Do this on a device where the app <em>already works</em> — one that shows your real inventory.</p>
+    <ol>
+        <li>Open the app and tap the gear icon <strong>⚙</strong> in the top-right.</li>
+        <li>Under <strong>Firebase Config</strong>, the box already contains your value. Select it all and copy it.</li>
+        <li>Under <strong>Lab Key</strong>, tap <strong>Show</strong> to unmask it, then write it down or copy it.</li>
+        <li>Close Settings.</li>
+    </ol>
+    <p class="muted">The Gemini key can also be revealed with <strong>Show</strong>, but each person can just as easily use their own free key — see section 4.</p>
+
+    <h3>If no device works yet</h3>
+    <p>Then the database hasn't been created, or nobody has the key. See section 6 for starting from scratch.</p>
+
+    <div class="note warn">
+        <strong>Keep these off the internet.</strong> Don't put the Lab Key or Firebase Config in a public
+        document, a GitHub repo, or a shared web page. Anyone who has both can read and change your inventory.
+        Send them to labmates directly — in person, or over a message you trust.
+    </div>
+</div>
+
+<div class="card">
+    <h2><span class="num">2</span> Set up the new device</h2>
+    <ol>
+        <li>Open the app link in the device's browser.
+            <br><span class="muted">On iPhone/iPad this must be <strong>Safari</strong>. On Android, use <strong>Chrome</strong>.</span></li>
+        <li>Tap the gear icon <strong>⚙</strong> in the top-right.</li>
+        <li>Paste your <strong>Firebase Config</strong> into the first box and tap <strong>Save</strong>.</li>
+        <li>Type your <strong>Lab Key</strong> into the second box and tap <strong>Save</strong>.
+            <br><span class="muted">It must match the other devices <em>exactly</em> — capital letters and spaces count.</span></li>
+        <li>Close Settings and <strong>reload the page</strong>. Both settings only take effect after a reload.</li>
+    </ol>
+    <p>You should briefly see <strong>"Connected to shared database."</strong> at the bottom of the screen.</p>
+
+    <h3>Check it worked</h3>
+    <p>Tap <strong>Inventory</strong>. The number badge next to the word "Inventory" should match what you see on your other devices.</p>
+    <div class="note info">
+        <strong>Badge shows 0, or the list is empty?</strong> Almost always a mistyped Lab Key. A different key
+        isn't an error — it opens a brand-new empty inventory. Go back to Settings, tap <strong>Show</strong>
+        under Lab Key, and compare it character by character with your working device.
+    </div>
+</div>
+
+<div class="card">
+    <h2><span class="num">3</span> Add it to the home screen</h2>
+    <p>This makes it open like a real app — full screen, its own icon, and it works with no signal.</p>
+
+    <h3>iPhone / iPad</h3>
+    <ol>
+        <li>In <strong>Safari</strong>, tap the <strong>Share</strong> button (the square with an arrow).</li>
+        <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong>.</li>
+    </ol>
+
+    <h3>Android</h3>
+    <ol>
+        <li>In <strong>Chrome</strong>, tap the <strong>⋮</strong> menu.</li>
+        <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+    </ol>
+
+    <h3>Desktop (Chrome or Edge)</h3>
+    <ol>
+        <li>Click the install icon in the address bar, or the <strong>⋮</strong> menu → <strong>Install</strong>.</li>
+    </ol>
+
+    <div class="note info">
+        Do the settings from section 2 <em>before</em> adding to the home screen, so the installed
+        app starts out already connected.
+    </div>
+</div>
+
+<div class="card">
+    <h2><span class="num">4</span> Optional: Snap Label (AI)</h2>
+    <p>Lets you photograph a bottle label and have the fields filled in automatically. It's free for normal lab use, and each person can have their own key.</p>
+    <ol>
+        <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
+        <li>Click <strong>Create API key</strong> and copy it.</li>
+        <li>In the app: gear icon <strong>⚙</strong> → <strong>Google Gemini API Key</strong> → paste → <strong>Save</strong>.</li>
+    </ol>
+    <p class="muted">Skip this and everything else still works — you just type entries in by hand, and the manual lookup falls back to PubChem.</p>
+</div>
+
+<div class="card">
+    <h2><span class="num">5</span> Last step: pick your name</h2>
+    <p>At the top of the app there are two dropdowns. These decide who gets credited for each bottle.</p>
+    <ul>
+        <li><strong>Name</strong> — pick yourself. If you're not listed, tap <strong>Edit</strong> next to it and add yourself.</li>
+        <li><strong>Location</strong> — where you're currently working. Tap <strong>Edit</strong> to add shelves, cabinets, or rooms.</li>
+    </ul>
+    <p>Both lists are shared with the whole lab, so anything you add here shows up for everyone. Your own selections are remembered on this device.</p>
+</div>
+
+<div class="card">
+    <h2><span class="num">6</span> Starting a brand-new lab database</h2>
+    <p class="muted">Only needed once, by whoever sets the lab up. Skip this if a database already exists.</p>
+    <ol>
+        <li>Go to <a href="https://console.firebase.google.com" target="_blank" rel="noopener">console.firebase.google.com</a> and create a project (the free Spark plan is enough).</li>
+        <li>In the left sidebar choose <strong>Build → Realtime Database</strong>, then <strong>Create Database</strong>.</li>
+        <li>Copy the database URL — it looks like:
+            <pre><code>https://your-project-default-rtdb.firebaseio.com</code></pre>
+        </li>
+        <li>Paste that into <strong>Firebase Config</strong> in the app's Settings.</li>
+        <li>Invent a <strong>Lab Key</strong> — a shared password for the lab. Anything memorable works, but longer is better. Everyone will type this exact string.</li>
+        <li>Reload, then hand both values to your labmates using section 2.</li>
+    </ol>
+    <div class="note warn">
+        <strong>A note on security.</strong> The Lab Key is scrambled into a folder name inside the database
+        — it keeps casual snooping out, but it is not real protection. Anyone who knows the database URL
+        could still reach the data. If your inventory is sensitive, set proper Firebase security rules on the
+        database, which is the real fix.
+    </div>
+</div>
+
+<div class="card">
+    <h2><span class="num">?</span> Troubleshooting</h2>
+
+    <h3>"Offline" appears in the top-left</h3>
+    <p>The app can't reach the database. It still works — everything you do is saved on the device and uploads
+    automatically once you're back on Wi-Fi. Nothing is lost.</p>
+
+    <h3>A number like "3 unsynced" appears</h3>
+    <p>Three changes are waiting to upload. Open the app somewhere with signal and leave it open a few
+    seconds; the badge disappears once they've gone up. <strong>Don't clear your browser data while this is
+    showing</strong> — that would discard those changes.</p>
+
+    <h3>The inventory is empty on a new device</h3>
+    <p>Nearly always a mistyped Lab Key — see the box in section 2.</p>
+
+    <h3>Two devices show different inventories</h3>
+    <p>Their Lab Keys don't match. Reveal both with <strong>Show</strong> and compare exactly.</p>
+
+    <h3>The app looks out of date after an update</h3>
+    <p>Close it completely and reopen it. Because it's built to work offline, it may serve the previous
+    version once before picking up the new one.</p>
+
+    <h3>Snap Label says no API key</h3>
+    <p>That key is per-device — see section 4. Every new device needs its own.</p>
+
+    <h3>Starting over on a device</h3>
+    <p>Clear the site's data in browser settings, then redo section 2. Only do this when nothing shows as
+    unsynced.</p>
+</div>
+
+<p style="text-align:center">
+    <a class="back" href="./">&larr; Back to the app</a>
+</p>
+
+</main>
+</body>
+</html>
