@@ -2178,14 +2178,16 @@ If a field cannot be determined, use empty string "".`
             });
         }
 
-        // Identity of a product for grouping: vendor + catalog number, falling
-        // back to CAS, then name. Bottles that share this are the same chemical.
+        // Identity of a product for grouping. CAS wins when present: the same
+        // CAS is the same chemical, so different sizes or catalog numbers of one
+        // reagent group together. Without a CAS, fall back to vendor + catalog
+        // number, then name.
         groupKey(item) {
+            const cas = (item.casNumber || '').replace(/\s+/g, '').trim();
+            if (cas) return 'cas:' + cas;
             const vendor = (item.vendor || '').toLowerCase().trim();
             const pn = (item.productNumber || '').toLowerCase().trim();
             if (pn) return 'pn:' + vendor + '|' + pn;
-            const cas = (item.casNumber || '').trim();
-            if (cas) return 'cas:' + cas;
             return 'name:' + (item.productName || '').toLowerCase().trim();
         }
 
@@ -2208,8 +2210,17 @@ If a field cannot be determined, use empty string "".`
                 ? `${activeN} active · ${disposedN} disposed`
                 : `${activeN} bottle${activeN !== 1 ? 's' : ''}`;
 
-            const sub = [sample.vendor, sample.productNumber, sample.casNumber ? 'CAS ' + sample.casNumber : '']
-                .filter(Boolean).map(s => this.esc(s)).join(' &bull; ');
+            // The group can span multiple vendors and catalog numbers (same CAS,
+            // different packaging), so summarise rather than showing one sample.
+            const vendors = [...new Set(members.map(i => i.vendor).filter(Boolean))];
+            const pns = [...new Set(members.map(i => i.productNumber).filter(Boolean))];
+            const subParts = [];
+            if (vendors.length === 1) subParts.push(vendors[0]);
+            else if (vendors.length > 1) subParts.push(vendors.length + ' vendors');
+            if (pns.length === 1) subParts.push(pns[0]);
+            else if (pns.length > 1) subParts.push(pns.length + ' product #s');
+            if (sample.casNumber) subParts.push('CAS ' + sample.casNumber);
+            const sub = subParts.map(s => this.esc(s)).join(' &bull; ');
 
             return `
                 <div class="inv-group ${open ? 'open' : ''} ${worst ? worst.level : ''}">
