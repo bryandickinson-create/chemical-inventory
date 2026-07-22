@@ -583,6 +583,52 @@ input[readonly] {
 .lookup-status.error { color: var(--danger); }
 .lookup-status.loading { color: var(--primary); }
 
+/* ==================== In-App Camera ==================== */
+.camera-view {
+    margin-top: 0.75rem;
+}
+
+.camera-view video {
+    width: 100%;
+    max-height: 60vh;
+    border-radius: var(--radius-sm);
+    background: #000;
+    display: block;
+    object-fit: cover;
+}
+
+.camera-hint {
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--gray-500);
+    margin-top: 0.5rem;
+}
+
+.camera-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.6rem;
+}
+
+/* Big centred shutter so it's hittable one-handed while holding a bottle. */
+.camera-shutter {
+    width: 68px;
+    height: 68px;
+    border-radius: 50%;
+    border: 4px solid var(--gray-300);
+    background: var(--success);
+    cursor: pointer;
+    flex-shrink: 0;
+    box-shadow: var(--shadow);
+    transition: transform 0.1s ease;
+}
+.camera-shutter:active { transform: scale(0.92); }
+.camera-shutter:disabled { opacity: 0.5; cursor: default; }
+
+.camera-controls .btn { flex: 1; }
+
 .auto-submit-toggle {
     display: flex;
     align-items: center;

@@ -130,6 +130,17 @@
                     <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
                 </button>
                 <input type="file" id="label-capture" accept="image/*" capture="environment" style="display:none">
+                <!-- In-app camera. Avoids the OS "Use Photo" confirmation that a
+                     file input forces; one tap goes straight to analysis. -->
+                <div id="camera-view" class="camera-view" style="display:none">
+                    <video id="camera-stream" playsinline muted autoplay></video>
+                    <p class="camera-hint">Fill the frame with the label, then tap the circle.</p>
+                    <div class="camera-controls">
+                        <button type="button" id="camera-cancel" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="camera-shutter" class="camera-shutter" aria-label="Capture label"></button>
+                        <button type="button" id="camera-pick" class="btn btn-secondary">Library</button>
+                    </div>
+                </div>
                 <label class="auto-submit-toggle">
                     <input type="checkbox" id="auto-submit"> Auto-add (skip review)
                 </label>
@@ -302,7 +313,7 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=28"></script>
+    <script src="app.js?v=29"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {

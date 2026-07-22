@@ -595,6 +595,7 @@
             this.selectedMoveBottles = new Set();
             this.modalTarget = null; // 'names' or 'locations'
             this.editingId = null;   // set while the form is editing an existing entry
+            this.cameraStream = null; // live MediaStream while the in-app camera is open
         }
 
         getGeminiKey() {
@@ -1046,7 +1047,7 @@
         }
 
         // ---- Snap Label (AI Vision) ----
-        triggerSnapLabel() {
+        async triggerSnapLabel() {
             if (!this.getSessionName() || !this.getSessionLocation()) {
                 showToast('Select your Name and Location first.', 'error');
                 return;
@@ -1056,20 +1057,104 @@
                 this.openSettings();
                 return;
             }
+            // Prefer the in-app camera: a file input with `capture` hands control
+            // to the OS camera app, which forces a Retake/Use Photo confirmation
+            // we can't skip. Fall back to it when there's no usable camera.
+            if (await this.openCamera()) return;
             document.getElementById('label-capture').click();
+        }
+
+        async openCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+            try {
+                this.cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } },
+                    audio: false,
+                });
+            } catch (e) {
+                // Denied permission, no camera, or an insecure origin.
+                console.warn('In-app camera unavailable, using photo picker:', e);
+                return false;
+            }
+
+            const video = document.getElementById('camera-stream');
+            video.srcObject = this.cameraStream;
+            try {
+                await video.play();
+            } catch (e) {
+                console.warn('Camera preview failed to start:', e);
+                this.closeCamera();
+                return false;
+            }
+
+            document.getElementById('camera-view').style.display = '';
+            document.getElementById('camera-shutter').disabled = false;
+            document.getElementById('snap-status').textContent = '';
+            document.getElementById('camera-view').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return true;
+        }
+
+        closeCamera() {
+            if (this.cameraStream) {
+                // Release the camera, or the indicator light stays on.
+                this.cameraStream.getTracks().forEach(t => t.stop());
+                this.cameraStream = null;
+            }
+            const video = document.getElementById('camera-stream');
+            if (video) video.srcObject = null;
+            const view = document.getElementById('camera-view');
+            if (view) view.style.display = 'none';
+        }
+
+        // Grabs the current preview frame, already downscaled for upload.
+        captureFrame(maxDimension = 1400) {
+            const video = document.getElementById('camera-stream');
+            const w = video.videoWidth, h = video.videoHeight;
+            if (!w || !h) return null;
+            const scale = Math.min(1, maxDimension / Math.max(w, h));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(w * scale);
+            canvas.height = Math.round(h * scale);
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            return {
+                data: canvas.toDataURL('image/jpeg', 0.85).split(',')[1],
+                mimeType: 'image/jpeg',
+            };
+        }
+
+        async shootLabel() {
+            const shutter = document.getElementById('camera-shutter');
+            shutter.disabled = true;
+            const image = this.captureFrame();
+            if (!image) {
+                showToast('Camera not ready yet — try again.', 'error');
+                shutter.disabled = false;
+                return;
+            }
+            hapticFeedback('light');
+            this.closeCamera();
+            await this.handleLabelImage(image);
         }
 
         async handleLabelCapture(file) {
             if (!file) return;
+            const snapStatus = document.getElementById('snap-status');
+            try {
+                const image = await this.fileToBase64(file);
+                await this.handleLabelImage(image);
+            } catch (e) {
+                console.error('Label analysis failed:', e);
+                snapStatus.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
+                snapStatus.className = 'lookup-status error';
+            }
+        }
 
+        async handleLabelImage(image) {
             const snapStatus = document.getElementById('snap-status');
             snapStatus.textContent = 'Analyzing label...';
             snapStatus.className = 'lookup-status loading';
 
             try {
-                // Downscale and convert image to base64
-                const image = await this.fileToBase64(file);
-
                 // Call Gemini Vision API
                 const result = await this.analyzeWithGemini(image);
 
@@ -1320,6 +1405,18 @@ Use an empty string for any field that is not visible or cannot be determined. D
                 e.target.value = ''; // Reset so same file can be re-selected
             });
 
+            // In-app camera
+            document.getElementById('camera-shutter').addEventListener('click', () => this.shootLabel());
+            document.getElementById('camera-cancel').addEventListener('click', () => this.closeCamera());
+            document.getElementById('camera-pick').addEventListener('click', () => {
+                this.closeCamera();
+                // Drop `capture` so this opens the photo library rather than
+                // bouncing straight back into the OS camera.
+                const input = document.getElementById('label-capture');
+                input.removeAttribute('capture');
+                input.click();
+            });
+
             // Mode toggle
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
             document.getElementById('mode-output').addEventListener('click', () => this.setMode('output'));
@@ -1370,6 +1467,7 @@ Use an empty string for any field that is not visible or cannot be determined. D
             this.mode = mode;
             document.body.className = 'mode-' + mode;
             window.scrollTo(0, 0);
+            this.closeCamera();
 
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
