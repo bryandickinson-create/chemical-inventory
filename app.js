@@ -833,7 +833,10 @@
                         ${this.esc(item)}
                         <span class="list-usage">${n ? n + (n === 1 ? ' entry' : ' entries') : 'unused'}</span>
                     </span>
-                    <button class="remove-btn" data-item="${this.esc(item)}" title="Remove">&times;</button>
+                    <span class="list-actions">
+                        <button class="rename-btn" data-item="${this.esc(item)}" title="Rename">&#9998;</button>
+                        <button class="remove-btn" data-item="${this.esc(item)}" title="Remove">&times;</button>
+                    </span>
                 </li>
             `;
             }).join('');
@@ -841,6 +844,90 @@
             ul.querySelectorAll('.remove-btn').forEach(btn => {
                 btn.addEventListener('click', () => this.removeListItem(btn.dataset.item));
             });
+            ul.querySelectorAll('.rename-btn').forEach(btn => {
+                btn.addEventListener('click', () => this.renameListItem(btn.dataset.item));
+            });
+        }
+
+        // Renaming rewrites every entry that uses the value, so the list and
+        // the data can't drift apart the way a remove-and-re-add would.
+        async renameListItem(oldValue) {
+            const target = this.modalTarget;
+            const noun = target === 'locations' ? 'location' : 'name';
+            const typed = prompt(`Rename ${noun} "${oldValue}" to:`, oldValue);
+            if (typed === null) return;
+            const newValue = typed.trim();
+            if (!newValue || newValue === oldValue) return;
+
+            const list = await this.db.getList(target);
+            const merging = list.some(i => i !== oldValue && i.toLowerCase() === newValue.toLowerCase());
+            const counts = await this.countListUsage(target);
+            const affected = counts.get(oldValue) || 0;
+            const plural = affected === 1 ? 'entry' : 'entries';
+
+            if (affected > 0 || merging) {
+                const message = merging
+                    ? `"${newValue}" already exists.\n\nMerge "${oldValue}" into it? ${affected} ${plural} will be relabelled and "${oldValue}" removed from the list.`
+                    : `Rename "${oldValue}" to "${newValue}"?\n\n${affected} inventory ${plural} will be updated to match.`;
+                if (!confirm(message)) return;
+            }
+
+            // Remember whether this value is the active session selection, so
+            // the user isn't silently deselected by their own rename.
+            const nameSel = document.getElementById('session-name');
+            const locSel = document.getElementById('session-location');
+            const reselectName = target === 'names' && nameSel.value === oldValue;
+            const reselectLoc = target === 'locations' && locSel.value === oldValue;
+
+            const next = list.filter(i => i !== oldValue);
+            if (!next.includes(newValue)) next.push(newValue);
+
+            const ok = await this.write(async () => {
+                await this.db.saveList(target, next);
+                await this.applyRename(target, oldValue, newValue);
+            }, 'Renaming');
+            if (!ok) return;
+
+            await this.refreshModalList();
+            await this.loadSessionDropdowns();
+            if (reselectName) nameSel.value = newValue;
+            if (reselectLoc) locSel.value = newValue;
+            this.saveSession();
+            if (this.mode === 'inventory') {
+                await this.populateLocationFilter();
+                this.refreshInventory();
+            }
+            feedbackSuccess();
+            showToast(
+                affected
+                    ? `Renamed to "${newValue}" — ${affected} ${plural} updated.`
+                    : `Renamed to "${newValue}".`,
+                'success'
+            );
+        }
+
+        // Rewrites the value everywhere it appears on inventory items, history
+        // included, so a shelf or person has one label throughout. The audit
+        // log is deliberately left alone — it records what happened at the time.
+        async applyRename(target, oldValue, newValue) {
+            const items = await this.db.getAllItems();
+            for (const item of items) {
+                let changed = false;
+                if (target === 'locations') {
+                    if (item.location === oldValue) { item.location = newValue; changed = true; }
+                    (item.history || []).forEach(h => {
+                        if (h.from === oldValue) { h.from = newValue; changed = true; }
+                        if (h.to === oldValue) { h.to = newValue; changed = true; }
+                    });
+                } else {
+                    if (item.addedBy === oldValue) { item.addedBy = newValue; changed = true; }
+                    if (item.removedBy === oldValue) { item.removedBy = newValue; changed = true; }
+                    (item.history || []).forEach(h => {
+                        if (h.by === oldValue) { h.by = newValue; changed = true; }
+                    });
+                }
+                if (changed) await this.db.updateItem(item);
+            }
         }
 
         async addListItem() {
