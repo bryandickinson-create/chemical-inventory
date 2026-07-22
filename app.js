@@ -596,6 +596,8 @@
             this.modalTarget = null; // 'names' or 'locations'
             this.editingId = null;   // set while the form is editing an existing entry
             this.cameraStream = null; // live MediaStream while the in-app camera is open
+            this.batchCount = 0;      // bottles added in the current auto-add run
+            this.approvedDuplicates = new Set(); // "productNumber|location" the user already OK'd this batch
         }
 
         getGeminiKey() {
@@ -1094,6 +1096,18 @@
             return true;
         }
 
+        // Ends an auto-add run: clears the running total and the duplicate
+        // approvals, which are only meant to apply within a single batch.
+        endBatch() {
+            if (this.batchCount > 0) {
+                showToast(`Batch finished — ${this.batchCount} bottle${this.batchCount !== 1 ? 's' : ''} added.`, 'success');
+            }
+            this.batchCount = 0;
+            this.approvedDuplicates.clear();
+            const snapStatus = document.getElementById('snap-status');
+            if (snapStatus) snapStatus.textContent = '';
+        }
+
         closeCamera() {
             if (this.cameraStream) {
                 // Release the camera, or the indicator light stays on.
@@ -1133,7 +1147,7 @@
             }
             hapticFeedback('light');
             this.closeCamera();
-            await this.handleLabelImage(image);
+            await this.handleLabelImage(image, true);
         }
 
         async handleLabelCapture(file) {
@@ -1149,7 +1163,7 @@
             }
         }
 
-        async handleLabelImage(image) {
+        async handleLabelImage(image, fromCamera = false) {
             const snapStatus = document.getElementById('snap-status');
             snapStatus.textContent = 'Analyzing label...';
             snapStatus.className = 'lookup-status loading';
@@ -1197,7 +1211,21 @@
 
                     // Auto-submit if toggle is checked
                     if (document.getElementById('auto-submit').checked) {
-                        await this.submitChemical();
+                        const added = await this.submitChemical();
+                        // Batch mode: reopen the camera for the next bottle so a
+                        // shelf can be worked through without touching the screen
+                        // between scans. Only after a real save, and only when the
+                        // scan came from the camera rather than the photo library.
+                        if (added && fromCamera && this.mode === 'input') {
+                            this.batchCount++;
+                            // Set the running total after reopening: openCamera
+                            // resets the status line.
+                            await this.openCamera();
+                            snapStatus.textContent =
+                                `Added ${this.batchCount} this batch — ready for the next bottle.`;
+                            snapStatus.className = 'lookup-status success';
+                            return;
+                        }
                     }
 
                     setTimeout(() => { snapStatus.textContent = ''; }, 3000);
@@ -1407,7 +1435,14 @@ Use an empty string for any field that is not visible or cannot be determined. D
 
             // In-app camera
             document.getElementById('camera-shutter').addEventListener('click', () => this.shootLabel());
-            document.getElementById('camera-cancel').addEventListener('click', () => this.closeCamera());
+            document.getElementById('camera-cancel').addEventListener('click', () => {
+                this.closeCamera();
+                this.endBatch();
+            });
+            // Turning auto-add off ends the run; a stale count would be confusing.
+            document.getElementById('auto-submit').addEventListener('change', (e) => {
+                if (!e.target.checked) this.endBatch();
+            });
             document.getElementById('camera-pick').addEventListener('click', () => {
                 this.closeCamera();
                 // Drop `capture` so this opens the photo library rather than
@@ -1468,6 +1503,7 @@ Use an empty string for any field that is not visible or cannot be determined. D
             document.body.className = 'mode-' + mode;
             window.scrollTo(0, 0);
             this.closeCamera();
+            this.endBatch();
 
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
             document.getElementById('mode-output').classList.toggle('active', mode === 'output');
@@ -1694,12 +1730,12 @@ If a field cannot be determined, use empty string "".`
             if (!vendor || !productNumber || !productName || !amount) {
                 showToast('Fill in all required fields.', 'error');
                 feedbackError();
-                return;
+                return false;
             }
 
             if (this.editingId) {
                 await this.saveEdit({ barcode, vendor, productNumber, productName, casNumber, amount, unit, expiration, notes });
-                return;
+                return true;
             }
 
             // Warn on a bottle that looks like one already on the same shelf —
@@ -1710,13 +1746,17 @@ If a field cannot be determined, use empty string "".`
                 (i.productNumber || '').toLowerCase() === productNumber.toLowerCase() &&
                 (i.location || '') === location
             );
-            if (duplicates.length > 0) {
+            // Once you've confirmed you really are shelving several of the same
+            // item, don't ask again for that item during this batch.
+            const dupKey = productNumber.toLowerCase() + '|' + location;
+            if (duplicates.length > 0 && !this.approvedDuplicates.has(dupKey)) {
                 const proceed = confirm(
                     `${duplicates.length} active bottle${duplicates.length !== 1 ? 's' : ''} of ${productNumber} ` +
                     `${duplicates.length !== 1 ? 'are' : 'is'} already recorded at ${location || 'this location'}.\n\n` +
                     `Add another one anyway?`
                 );
-                if (!proceed) return;
+                if (!proceed) return false;
+                this.approvedDuplicates.add(dupKey);
             }
 
             // Save chemical template for future auto-fill
@@ -1729,7 +1769,7 @@ If a field cannot be determined, use empty string "".`
                 amount,
                 unit,
             }), 'Saving chemical details');
-            if (!templateSaved) return;
+            if (!templateSaved) return false;
 
             // Create inventory item
             const item = {
@@ -1753,11 +1793,12 @@ If a field cannot be determined, use empty string "".`
             };
 
             const ok = await this.write(() => this.db.addItem(item), 'Adding to inventory');
-            if (!ok) return;
+            if (!ok) return false;
             feedbackSuccess();
             showToast(`Added: ${productName} (${amount} ${unit})`, 'success');
             this.hideForm();
             this.refreshInventory();
+            return true;
         }
 
         // ---- Editing an existing entry ----
