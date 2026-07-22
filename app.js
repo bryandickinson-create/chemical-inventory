@@ -685,8 +685,14 @@
                     if (this.mode === 'inventory') this.refreshInventory();
                 });
             } else {
+                // No Firebase configured: this device keeps its own private
+                // inventory. Say so loudly — silently diverging from everyone
+                // else looks identical to a sync bug.
                 this.db = new ChemDB();
                 await this.db.init();
+                this.localOnly = true;
+                this.renderLocalOnlyStatus();
+                showToast('Not connected to the lab database — this device is on its own. Open Settings.', 'error');
             }
             this.bindEvents();
             try {
@@ -699,6 +705,14 @@
         }
 
         // ---- Sync Status ----
+        renderLocalOnlyStatus() {
+            const el = document.getElementById('sync-status');
+            if (!el) return;
+            el.textContent = 'Local';
+            el.className = 'sync-status local';
+            el.title = 'This device is not connected to the shared lab database.';
+        }
+
         renderSyncStatus(online, pending) {
             const el = document.getElementById('sync-status');
             if (!el) return;
@@ -1906,8 +1920,16 @@ If a field cannot be determined, use empty string "".`
 
         // ---- Inventory Display ----
         async populateLocationFilter() {
-            const locations = await this.db.getList('locations');
-            this.populateSelect('filter-location', locations.slice());
+            // Include locations that actually appear on items, not just the
+            // managed list. Renaming or removing a location from the list would
+            // otherwise strand every bottle still filed under the old name —
+            // they'd count towards the badge but be impossible to browse to.
+            const [managed, items] = await Promise.all([
+                this.db.getList('locations'),
+                this.db.getAllItems(),
+            ]);
+            const used = items.map(i => i.location).filter(Boolean);
+            this.populateSelect('filter-location', [...new Set([...managed, ...used])]);
         }
 
         async refreshInventory() {

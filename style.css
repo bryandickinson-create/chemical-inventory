@@ -110,6 +110,12 @@ header h1 {
     text-align: center;
     color: var(--gray-800);
     letter-spacing: -0.01em;
+    /* Leave room for the status pill (left) and the gear (right), both of
+       which are absolutely positioned over this row. */
+    padding: 0 5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .settings-btn {
@@ -148,6 +154,10 @@ header h1 {
 .sync-status.pending {
     background: var(--warn-light);
     color: var(--warn-text);
+}
+.sync-status.local {
+    background: var(--danger-light);
+    color: var(--danger);
 }
 
 .settings-hint {
