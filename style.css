@@ -590,11 +590,16 @@ input[readonly] {
 
 .camera-view video {
     width: 100%;
-    max-height: 60vh;
+    height: auto;
+    /* Phone cameras hand back a tall portrait frame. `cover` would crop it to
+       fill this box — looking zoomed in, and worse, showing something other
+       than what gets captured, since we grab the whole frame. `contain`
+       letterboxes instead, so the preview matches the photo exactly. */
+    max-height: 50vh;
+    object-fit: contain;
     border-radius: var(--radius-sm);
     background: #000;
     display: block;
-    object-fit: cover;
 }
 
 .camera-hint {
