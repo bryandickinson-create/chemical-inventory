@@ -530,14 +530,21 @@
     function feedbackError() { hapticFeedback('error'); playTone(300, 300, 'sawtooth'); }
 
     // ==================== Toast Notifications ====================
+    // Long IUPAC names wrap to three or four lines and swallow the controls
+    // underneath, so trim rather than relying on a CSS clamp.
+    const TOAST_MAX_CHARS = 64;
+
     function showToast(message, type = '') {
         const toast = document.getElementById('toast');
-        toast.textContent = message;
-        toast.className = 'toast' + (type ? ' ' + type : '');
-        toast.style.display = 'block';
+        toast.textContent = message.length > TOAST_MAX_CHARS
+            ? message.slice(0, TOAST_MAX_CHARS - 1).trimEnd() + '…'
+            : message;
+        // Visibility is driven by a class, not an inline style, so the
+        // stylesheet can control layout (line clamping, camera positioning).
+        toast.className = 'toast show' + (type ? ' ' + type : '');
         clearTimeout(toast._timeout);
         toast._timeout = setTimeout(() => {
-            toast.style.display = 'none';
+            toast.className = 'toast' + (type ? ' ' + type : '');
         }, 3000);
     }
 
@@ -1090,6 +1097,7 @@
             }
 
             document.getElementById('camera-view').style.display = '';
+            document.body.classList.add('camera-open');
             document.getElementById('camera-shutter').disabled = false;
             document.getElementById('snap-status').textContent = '';
             document.getElementById('camera-view').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1118,6 +1126,7 @@
             if (video) video.srcObject = null;
             const view = document.getElementById('camera-view');
             if (view) view.style.display = 'none';
+            document.body.classList.remove('camera-open');
         }
 
         // Grabs the current preview frame, already downscaled for upload.

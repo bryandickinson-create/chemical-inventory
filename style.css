@@ -866,6 +866,7 @@ input[readonly] {
 
 /* ==================== Toast ==================== */
 .toast {
+    display: none;
     position: fixed;
     bottom: 1.5rem;
     left: 50%;
@@ -881,6 +882,19 @@ input[readonly] {
     animation: toast-in 0.25s ease;
     max-width: calc(100vw - 2rem);
     text-align: center;
+    /* A transient notice must never swallow a tap meant for the button
+       underneath it — that made rapid batch scanning impossible. */
+    pointer-events: none;
+}
+
+.toast.show {
+    display: block;
+}
+
+/* While the camera is up, move confirmations away from the shutter. */
+body.camera-open .toast.show {
+    bottom: auto;
+    top: 0.75rem;
 }
 
 .toast.success { background: var(--success); }
