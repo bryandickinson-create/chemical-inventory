@@ -347,6 +347,19 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
     border-bottom: none;
 }
 
+.list-usage {
+    display: inline-block;
+    margin-left: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--gray-500);
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    border-radius: 999px;
+    padding: 0.05rem 0.4rem;
+    vertical-align: middle;
+}
+
 .modal-list .remove-btn {
     background: none;
     border: none;

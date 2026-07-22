@@ -793,6 +793,25 @@
             this.modalTarget = null;
         }
 
+        // How many inventory entries reference each list value, so removing one
+        // is an informed decision rather than a blind tap.
+        async countListUsage(target) {
+            const items = await this.db.getAllItems();
+            const counts = new Map();
+            const bump = v => { if (v) counts.set(v, (counts.get(v) || 0) + 1); };
+            items.forEach(i => {
+                if (target === 'locations') {
+                    bump(i.location);
+                } else {
+                    // A person can be attached as adder, remover, or via history.
+                    const people = new Set([i.addedBy, i.removedBy].filter(Boolean));
+                    (i.history || []).forEach(h => h.by && people.add(h.by));
+                    people.forEach(bump);
+                }
+            });
+            return counts;
+        }
+
         async refreshModalList() {
             const items = await this.db.getList(this.modalTarget);
             const ul = document.getElementById('modal-list');
@@ -804,13 +823,20 @@
                 return;
             }
             emptyMsg.style.display = 'none';
+            const counts = await this.countListUsage(this.modalTarget);
             items.sort((a, b) => a.localeCompare(b));
-            ul.innerHTML = items.map(item => `
+            ul.innerHTML = items.map(item => {
+                const n = counts.get(item) || 0;
+                return `
                 <li>
-                    <span>${this.esc(item)}</span>
+                    <span>
+                        ${this.esc(item)}
+                        <span class="list-usage">${n ? n + (n === 1 ? ' entry' : ' entries') : 'unused'}</span>
+                    </span>
                     <button class="remove-btn" data-item="${this.esc(item)}" title="Remove">&times;</button>
                 </li>
-            `).join('');
+            `;
+            }).join('');
 
             ul.querySelectorAll('.remove-btn').forEach(btn => {
                 btn.addEventListener('click', () => this.removeListItem(btn.dataset.item));
@@ -837,6 +863,23 @@
         }
 
         async removeListItem(value) {
+            // Removing a value in use doesn't touch the entries that reference
+            // it, but it does take it out of the dropdowns — say so plainly,
+            // because silently stranding a shelf full of bottles looks like
+            // data loss even though nothing was lost.
+            const counts = await this.countListUsage(this.modalTarget);
+            const inUse = counts.get(value) || 0;
+            if (inUse > 0) {
+                const noun = this.modalTarget === 'locations' ? 'location' : 'name';
+                const proceed = confirm(
+                    `"${value}" is used by ${inUse} inventory ${inUse === 1 ? 'entry' : 'entries'}.\n\n` +
+                    `Removing it will NOT delete or change those entries — they keep the ${noun} "${value}". ` +
+                    `It only disappears from the dropdown, so you won't be able to pick it for new entries.\n\n` +
+                    `Remove it anyway?`
+                );
+                if (!proceed) return;
+            }
+
             let items = await this.db.getList(this.modalTarget);
             items = items.filter(i => i !== value);
             const ok = await this.write(() => this.db.saveList(this.modalTarget, items), 'Removing entry');
