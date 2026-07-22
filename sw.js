@@ -8,7 +8,7 @@
 // ============================================================
 
 const CACHE_PREFIX = 'chem-inv-app';
-const CACHE_VERSION = CACHE_PREFIX + '-v11';
+const CACHE_VERSION = CACHE_PREFIX + '-v12';
 
 // Cache names used by earlier builds, cleaned up on activate.
 const LEGACY_CACHES = ['chem-inv-v1', 'chem-inv-beta-v1'];
@@ -31,10 +31,12 @@ self.addEventListener('install', (event) => {
         caches.open(CACHE_VERSION)
             // addAll is all-or-nothing; cache entries individually so one
             // unreachable file can't fail the whole install.
+            // cache: 'reload' bypasses the browser's own HTTP cache. Without it
+            // a precache can pull a stale copy straight back out of it, which
+            // defeats the point of bumping CACHE_VERSION at all.
             .then(cache => Promise.all(
-                SHELL.map(url => cache.add(url).catch(err =>
-                    console.warn('[sw] could not cache', url, err)
-                ))
+                SHELL.map(url => cache.add(new Request(url, { cache: 'reload' }))
+                    .catch(err => console.warn('[sw] could not cache', url, err)))
             ))
             .then(() => self.skipWaiting())
     );

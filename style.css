@@ -579,6 +579,11 @@ input[readonly] {
 
 .camera-view video {
     width: 100%;
+    /* A desktop webcam is wide; without a cap the preview fills the whole card
+       for no benefit. Phones are narrower than this, so it only bites on desktop. */
+    max-width: 460px;
+    margin-left: auto;
+    margin-right: auto;
     height: auto;
     /* Phone cameras hand back a tall portrait frame. `cover` would crop it to
        fill this box — looking zoomed in, and worse, showing something other
