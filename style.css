@@ -745,6 +745,85 @@ input[readonly] {
     min-width: 100px;
 }
 
+.group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    color: var(--gray-500);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.group-toggle input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--primary);
+}
+
+/* ==================== Grouped bottles ==================== */
+.inv-group {
+    border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+}
+.inv-group.expiring { border-color: var(--warn-border); }
+.inv-group.expired { border-color: var(--danger-border); }
+
+.inv-group-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.75rem;
+    background: var(--surface);
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+}
+.inv-group-header:hover { background: var(--gray-50); }
+
+.inv-group-caret {
+    color: var(--gray-400);
+    font-size: 0.75rem;
+    flex-shrink: 0;
+    width: 0.8rem;
+}
+
+.inv-group-title { flex: 1; min-width: 0; }
+.inv-group-name {
+    display: block;
+    font-weight: 600;
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.inv-group-sub {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--gray-500);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inv-group-badges {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
+}
+
+.inv-group-body {
+    padding: 0.5rem 0.5rem 0.1rem;
+    background: var(--gray-50);
+    border-top: 1px solid var(--gray-200);
+}
+.inv-group-body .inv-card { background: var(--surface); }
+
 .inv-card {
     border: 1.5px solid var(--gray-200);
     border-radius: var(--radius-sm);

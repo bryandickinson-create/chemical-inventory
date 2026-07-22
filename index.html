@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Inventory">
     <!-- Versioned like app.js: without it a cached stylesheet can outlive a
          deploy, leaving new markup styled by old CSS. Bump with CACHE_VERSION. -->
-    <link rel="stylesheet" href="style.css?v=42">
+    <link rel="stylesheet" href="style.css?v=43">
 </head>
 <body class="mode-input">
     <header>
@@ -275,6 +275,9 @@
                 <select id="filter-location">
                     <option value="">All locations</option>
                 </select>
+                <label class="group-toggle">
+                    <input type="checkbox" id="group-items" checked> Group duplicates
+                </label>
             </div>
             <div id="expiry-banner" class="warn-banner" style="display:none"></div>
             <div id="inventory-list"></div>
@@ -303,7 +306,7 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=42"></script>
+    <script src="app.js?v=43"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {

@@ -648,6 +648,7 @@
             this.cameraStream = null; // live MediaStream while the in-app camera is open
             this.batchCount = 0;      // bottles added in the current auto-add run
             this.approvedDuplicates = new Set(); // "productNumber|location" the user already OK'd this batch
+            this.expandedGroups = new Set(); // group keys currently expanded in the inventory list
         }
 
         getGeminiKey() {
@@ -1679,6 +1680,12 @@ Use an empty string for any field that is not visible or cannot be determined. D
             document.getElementById('search-inventory').addEventListener('input', () => this.refreshInventory());
             document.getElementById('filter-status').addEventListener('change', () => this.refreshInventory());
             document.getElementById('filter-location').addEventListener('change', () => this.refreshInventory());
+            const groupToggle = document.getElementById('group-items');
+            groupToggle.checked = localStorage.getItem('chem_group_items') !== 'off';
+            groupToggle.addEventListener('change', () => {
+                localStorage.setItem('chem_group_items', groupToggle.checked ? 'on' : 'off');
+                this.refreshInventory();
+            });
 
             // Export
             document.getElementById('export-active').addEventListener('click', () => this.exportXLSX('active'));
@@ -2128,9 +2135,114 @@ If a field cannot be determined, use empty string "".`
             }
 
             emptyEl.style.display = 'none';
-            listEl.innerHTML = items.map(item => {
-                const expiry = expiryState(item);
-                return `
+
+            const grouping = document.getElementById('group-items');
+            if (!grouping || !grouping.checked) {
+                listEl.innerHTML = items.map(item => this.renderCard(item)).join('');
+                return;
+            }
+
+            // Group bottles of the same product so a solvent with five bottles
+            // is one row you expand, not five stacked cards.
+            const groups = new Map();
+            for (const item of items) {
+                const key = this.groupKey(item);
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(item);
+            }
+            const entries = [...groups.entries()];
+
+            // Sort groups like the individual cards were: expiring filter →
+            // soonest first; otherwise most recently active first.
+            entries.sort(([, am], [, bm]) => {
+                if (filterStatus === 'expiring') {
+                    const ax = Math.min(...am.map(i => daysUntil(i.expiration) ?? Infinity));
+                    const bx = Math.min(...bm.map(i => daysUntil(i.expiration) ?? Infinity));
+                    if (ax !== bx) return ax - bx;
+                }
+                const at = Math.max(...am.map(i => new Date(i.dateIn).getTime()));
+                const bt = Math.max(...bm.map(i => new Date(i.dateIn).getTime()));
+                return bt - at;
+            });
+
+            // A search that narrows to a single product opens it automatically.
+            if (entries.length === 1) this.expandedGroups.add(entries[0][0]);
+
+            this._renderGroupKeys = entries.map(([key]) => key);
+            listEl.innerHTML = entries.map(([key, members], idx) =>
+                members.length === 1 ? this.renderCard(members[0]) : this.renderGroup(key, members, idx)
+            ).join('');
+
+            listEl.querySelectorAll('.inv-group-header').forEach(btn => {
+                btn.addEventListener('click', () => this.toggleGroup(+btn.dataset.gi));
+            });
+        }
+
+        // Identity of a product for grouping: vendor + catalog number, falling
+        // back to CAS, then name. Bottles that share this are the same chemical.
+        groupKey(item) {
+            const vendor = (item.vendor || '').toLowerCase().trim();
+            const pn = (item.productNumber || '').toLowerCase().trim();
+            if (pn) return 'pn:' + vendor + '|' + pn;
+            const cas = (item.casNumber || '').trim();
+            if (cas) return 'cas:' + cas;
+            return 'name:' + (item.productName || '').toLowerCase().trim();
+        }
+
+        renderGroup(key, members, idx) {
+            const open = this.expandedGroups.has(key);
+            const sample = members[0];
+            const activeN = members.filter(i => i.status === 'active').length;
+            const disposedN = members.length - activeN;
+
+            // Worst expiry across the bottles drives the collapsed badge.
+            const states = members.map(expiryState).filter(Boolean);
+            const worst = states.find(s => s.level === 'expired') || states.find(s => s.level === 'expiring');
+
+            const locations = [...new Set(members.filter(i => i.status === 'active' && i.location).map(i => i.location))];
+            const locLabel = locations.length
+                ? locations.slice(0, 3).join(', ') + (locations.length > 3 ? ` +${locations.length - 3}` : '')
+                : '';
+
+            const countLabel = disposedN
+                ? `${activeN} active · ${disposedN} disposed`
+                : `${activeN} bottle${activeN !== 1 ? 's' : ''}`;
+
+            const sub = [sample.vendor, sample.productNumber, sample.casNumber ? 'CAS ' + sample.casNumber : '']
+                .filter(Boolean).map(s => this.esc(s)).join(' &bull; ');
+
+            return `
+                <div class="inv-group ${open ? 'open' : ''} ${worst ? worst.level : ''}">
+                    <button type="button" class="inv-group-header" data-gi="${idx}">
+                        <span class="inv-group-caret">${open ? '&#9662;' : '&#9656;'}</span>
+                        <span class="inv-group-title">
+                            <span class="inv-group-name">${this.esc(sample.productName)}</span>
+                            <span class="inv-group-sub">${sub}</span>
+                            ${locLabel ? `<span class="inv-group-sub">${this.esc(locLabel)}</span>` : ''}
+                        </span>
+                        <span class="inv-group-badges">
+                            ${worst ? `<span class="inv-status ${worst.level}">${worst.label}</span>` : ''}
+                            <span class="badge">${countLabel}</span>
+                        </span>
+                    </button>
+                    <div class="inv-group-body" ${open ? '' : 'style="display:none"'}>
+                        ${members.map(m => this.renderCard(m)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        toggleGroup(idx) {
+            const key = (this._renderGroupKeys || [])[idx];
+            if (!key) return;
+            if (this.expandedGroups.has(key)) this.expandedGroups.delete(key);
+            else this.expandedGroups.add(key);
+            this.refreshInventory();
+        }
+
+        renderCard(item) {
+            const expiry = expiryState(item);
+            return `
                 <div class="inv-card ${item.status === 'disposed' ? 'disposed' : ''} ${expiry ? expiry.level : ''}">
                     <div class="inv-header">
                         <div class="inv-name">${this.esc(item.productName)}</div>
@@ -2167,7 +2279,6 @@ If a field cannot be determined, use empty string "".`
                     </div>
                 </div>
             `;
-            }).join('');
         }
 
         formatMoveHistory(item) {
