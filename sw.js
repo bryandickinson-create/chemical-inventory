@@ -8,7 +8,7 @@
 // ============================================================
 
 const CACHE_PREFIX = 'chem-inv-app';
-const CACHE_VERSION = CACHE_PREFIX + '-v16';
+const CACHE_VERSION = CACHE_PREFIX + '-v18';
 
 // Cache names used by earlier builds, cleaned up on activate.
 const LEGACY_CACHES = ['chem-inv-v1', 'chem-inv-beta-v1'];
@@ -23,6 +23,8 @@ const SHELL = [
     './icons/icon-192.png',
     './icons/icon-512.png',
     './icons/apple-touch-icon.png',
+    './icons/logo.png',
+    './icons/logo-dark.png',
     'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
 ];
 

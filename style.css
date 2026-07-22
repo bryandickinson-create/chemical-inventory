@@ -118,6 +118,23 @@ header h1 {
     white-space: nowrap;
 }
 
+.brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.brand picture { display: block; }
+
+.brand img {
+    height: 42px;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+    display: block;
+}
+
 .settings-btn {
     position: absolute;
     right: 0;
@@ -931,6 +948,10 @@ body.camera-open .toast.show {
 
     header h1 {
         font-size: 1.35rem;
+    }
+
+    .brand img {
+        height: 56px;
     }
 
     .mode-toggle {

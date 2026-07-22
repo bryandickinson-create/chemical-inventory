@@ -12,12 +12,20 @@
     <meta name="apple-mobile-web-app-title" content="Inventory">
     <!-- Versioned like app.js: without it a cached stylesheet can outlive a
          deploy, leaving new markup styled by old CSS. Bump with CACHE_VERSION. -->
-    <link rel="stylesheet" href="style.css?v=40">
+    <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body class="mode-input">
     <header>
         <div class="header-top">
-            <h1>Dickinson Group Inventory</h1>
+            <h1 class="brand">
+                <!-- The colour mark is entirely dark ink and vanishes on a dark
+                     header, so dark mode gets the knockout version instead.
+                     <picture> means only the matching one is downloaded. -->
+                <picture>
+                    <source srcset="icons/logo-dark.png" media="(prefers-color-scheme: dark)">
+                    <img src="icons/logo.png" alt="Dickinson Group Inventory" width="537" height="168">
+                </picture>
+            </h1>
             <span id="sync-status" class="sync-status"></span>
             <button id="settings-btn" class="settings-btn" title="Settings">&#9881;</button>
         </div>
@@ -295,7 +303,7 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=40"></script>
+    <script src="app.js?v=42"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {
