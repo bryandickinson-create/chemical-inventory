@@ -4,12 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Dickinson Group Inventory</title>
+    <meta name="theme-color" content="#2563eb">
+    <meta name="color-scheme" content="light dark">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Inventory">
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="mode-input">
     <header>
         <div class="header-top">
             <h1>Dickinson Group Inventory</h1>
+            <span id="sync-status" class="sync-status"></span>
             <button id="settings-btn" class="settings-btn" title="Settings">&#9881;</button>
         </div>
         <div class="mode-toggle">
@@ -192,8 +199,14 @@
                     <label for="f-notes">Notes</label>
                     <input type="text" id="f-notes" placeholder="e.g., Lot #, special storage">
                 </div>
+                <div class="form-group">
+                    <label for="f-location">Location</label>
+                    <select id="f-location">
+                        <option value="">-- Use session location --</option>
+                    </select>
+                </div>
                 <div class="form-actions">
-                    <button type="submit" class="btn btn-success btn-large">Add to Inventory</button>
+                    <button type="submit" id="form-submit" class="btn btn-success btn-large">Add to Inventory</button>
                     <button type="button" id="cancel-form" class="btn btn-secondary">Cancel</button>
                 </div>
             </form>
@@ -247,10 +260,17 @@
                 <input type="text" id="search-inventory" placeholder="Search chemicals...">
                 <select id="filter-status">
                     <option value="active">Active</option>
+                    <option value="expiring">Expiring</option>
                     <option value="disposed">Disposed</option>
                     <option value="all">All</option>
                 </select>
             </div>
+            <div class="inventory-controls">
+                <select id="filter-location">
+                    <option value="">All locations</option>
+                </select>
+            </div>
+            <div id="expiry-banner" class="warn-banner" style="display:none"></div>
             <div id="inventory-list"></div>
             <div id="inventory-empty" class="empty-state">
                 No items in inventory yet. Scan a chemical to get started.
@@ -277,6 +297,15 @@
     <div id="toast" class="toast" style="display:none"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=25"></script>
+    <script src="app.js?v=26"></script>
+    <script>
+        // Offline app shell. Registered after load so it never delays first paint.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .catch(err => console.warn('Service worker registration failed:', err));
+            });
+        }
+    </script>
 </body>
 </html>

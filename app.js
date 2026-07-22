@@ -8,6 +8,10 @@
 (function () {
     'use strict';
 
+    // Gemini model used for both label vision and web-grounded text lookup.
+    // Change here to try a newer model.
+    const GEMINI_MODEL = 'gemini-2.5-flash';
+
     // ==================== Database ====================
     class ChemDB {
         constructor() {
@@ -234,6 +238,265 @@
         }
     }
 
+    // ==================== Offline-Tolerant Database ====================
+    // Wraps the Firebase database with a local IndexedDB mirror and a replay
+    // queue. Writes always land locally first, so a dropped connection in the
+    // lab never loses an entry — the queue drains when the network returns.
+    class SyncedDB {
+        constructor(remote, local) {
+            this.remote = remote;
+            this.local = local;
+            this.pending = this._loadQueue();
+            this.online = true;
+            this.pollInterval = null;
+            this.onStatusChange = null;
+            this.lastMirror = 0;
+            this.MIRROR_INTERVAL = 60000; // don't rewrite the local mirror on every poll
+        }
+
+        // Local storage must come up; the remote is allowed to be unreachable.
+        // Returns true if the shared database is connected.
+        async init() {
+            await this.local.init();
+            window.addEventListener('online', () => this.flush());
+            const connected = await this._connectRemote();
+            if (connected) this.flush();
+            return connected;
+        }
+
+        async _connectRemote() {
+            try {
+                await this.remote.init();
+                this.remoteReady = true;
+                this._setOnline(true);
+                return true;
+            } catch (e) {
+                console.warn('Shared database unavailable:', e);
+                this.remoteReady = false;
+                this._setOnline(false);
+                return false;
+            }
+        }
+
+        // -- Queue persistence --
+        _loadQueue() {
+            try {
+                return JSON.parse(localStorage.getItem('chem_pending_ops') || '[]');
+            } catch (e) {
+                return [];
+            }
+        }
+
+        _saveQueue() {
+            try {
+                localStorage.setItem('chem_pending_ops', JSON.stringify(this.pending));
+            } catch (e) {
+                console.warn('Could not persist pending queue:', e);
+            }
+        }
+
+        _enqueue(op) {
+            // Every op is a whole-record put, so a newer op for the same key
+            // fully supersedes the older one.
+            this.pending = this.pending.filter(p => !(p.kind === op.kind && p.key === op.key));
+            this.pending.push(op);
+            this._saveQueue();
+            this._setOnline(false);
+        }
+
+        _setOnline(state) {
+            this.online = state;
+            if (this.onStatusChange) this.onStatusChange(state, this.pending.length);
+        }
+
+        get pendingCount() {
+            return this.pending.length;
+        }
+
+        // Replays queued writes in order. Stops at the first failure so later
+        // ops don't jump ahead of earlier ones.
+        async flush() {
+            if (this.flushing || this.pending.length === 0) return;
+            // A failed startup leaves the remote unconfigured; retry before replaying.
+            if (!this.remoteReady && !(await this._connectRemote())) return;
+            this.flushing = true;
+            try {
+                while (this.pending.length > 0) {
+                    const op = this.pending[0];
+                    await this._replay(op);
+                    this.pending.shift();
+                    this._saveQueue();
+                }
+                this._setOnline(true);
+            } catch (e) {
+                console.warn('Sync flush stalled:', e);
+                this._setOnline(false);
+            } finally {
+                this.flushing = false;
+                if (this.onStatusChange) this.onStatusChange(this.online, this.pending.length);
+            }
+        }
+
+        _replay(op) {
+            if (op.kind === 'item') {
+                return op.value ? this.remote.addItem(op.value) : this.remote.deleteItem(op.key);
+            }
+            if (op.kind === 'chemical') return this.remote.saveChemical(op.value);
+            if (op.kind === 'list') return this.remote.saveList(op.key, op.value);
+            return Promise.resolve();
+        }
+
+        // Runs a write locally first, then remotely; queues it if the remote fails.
+        async _write(localFn, remoteFn, op) {
+            await localFn();
+            if (this.pending.length > 0) {
+                // Preserve ordering: if anything is already queued, this goes behind it.
+                this._enqueue(op);
+                this.flush();
+                return;
+            }
+            try {
+                await remoteFn();
+                this._setOnline(true);
+            } catch (e) {
+                console.warn('Remote write failed, queued for sync:', e);
+                this._enqueue(op);
+                showToast('Saved offline — will sync when reconnected.', '');
+            }
+        }
+
+        // Overlays queued writes onto a set of items so the UI shows unsynced work.
+        _applyPending(items) {
+            const queued = this.pending.filter(p => p.kind === 'item');
+            if (queued.length === 0) return items;
+            const map = new Map(items.map(i => [i.id, i]));
+            queued.forEach(p => {
+                if (p.value) map.set(p.key, p.value);
+                else map.delete(p.key);
+            });
+            return [...map.values()];
+        }
+
+        _mirrorItems(items) {
+            const now = Date.now();
+            if (now - this.lastMirror < this.MIRROR_INTERVAL) return;
+            this.lastMirror = now;
+            Promise.all(items.map(i => this.local.addItem(i)))
+                .catch(e => console.warn('Local mirror update failed:', e));
+        }
+
+        // -- Reads: remote when possible, local mirror when not --
+        async getAllItems() {
+            try {
+                const items = await this.remote.getAllItems();
+                this._setOnline(true);
+                this._mirrorItems(items);
+                return this._applyPending(items);
+            } catch (e) {
+                this._setOnline(false);
+                return this._applyPending(await this.local.getAllItems());
+            }
+        }
+
+        async getItem(id) {
+            const queued = this.pending.find(p => p.kind === 'item' && p.key === id);
+            if (queued) return queued.value ? JSON.parse(JSON.stringify(queued.value)) : undefined;
+            try {
+                const item = await this.remote.getItem(id);
+                this._setOnline(true);
+                return item;
+            } catch (e) {
+                this._setOnline(false);
+                return this.local.getItem(id);
+            }
+        }
+
+        async getList(key) {
+            const queued = this.pending.find(p => p.kind === 'list' && p.key === key);
+            if (queued) return queued.value.slice();
+            try {
+                const items = await this.remote.getList(key);
+                this._setOnline(true);
+                this.local.saveList(key, items).catch(() => { /* mirror is best-effort */ });
+                return items;
+            } catch (e) {
+                this._setOnline(false);
+                return this.local.getList(key);
+            }
+        }
+
+        async getChemical(barcode) {
+            const queued = this.pending.find(p => p.kind === 'chemical' && p.key === barcode);
+            if (queued) return queued.value;
+            try {
+                const chem = await this.remote.getChemical(barcode);
+                this._setOnline(true);
+                return chem;
+            } catch (e) {
+                this._setOnline(false);
+                return this.local.getChemical(barcode);
+            }
+        }
+
+        async getItemsByBarcode(barcode) {
+            const items = await this.getAllItems();
+            return items.filter(i => i.barcode === barcode);
+        }
+
+        async getActiveItemsByBarcode(barcode) {
+            return (await this.getItemsByBarcode(barcode)).filter(i => i.status === 'active');
+        }
+
+        // -- Writes --
+        addItem(item) {
+            return this._write(
+                () => this.local.addItem(item),
+                () => this.remote.addItem(item),
+                { kind: 'item', key: item.id, value: item }
+            );
+        }
+
+        updateItem(item) {
+            return this.addItem(item);
+        }
+
+        deleteItem(id) {
+            return this._write(
+                () => this.local.deleteItem(id),
+                () => this.remote.deleteItem(id),
+                { kind: 'item', key: id, value: null }
+            );
+        }
+
+        saveChemical(data) {
+            return this._write(
+                () => this.local.saveChemical(data),
+                () => this.remote.saveChemical(data),
+                { kind: 'chemical', key: data.barcode, value: data }
+            );
+        }
+
+        saveList(key, items) {
+            return this._write(
+                () => this.local.saveList(key, items),
+                () => this.remote.saveList(key, items),
+                { kind: 'list', key, value: items }
+            );
+        }
+
+        startSync(callback) {
+            this.pollInterval = setInterval(() => {
+                this.flush();
+                callback();
+            }, 10000);
+        }
+
+        stopSync() {
+            if (this.pollInterval) clearInterval(this.pollInterval);
+            this.pollInterval = null;
+        }
+    }
+
     // ==================== Haptic & Audio Feedback ====================
     function hapticFeedback(type = 'light') {
         try {
@@ -297,6 +560,31 @@
         return new Date(iso).toLocaleDateString();
     }
 
+    // ==================== Expiration ====================
+    const EXPIRY_WARN_DAYS = 60;
+
+    // Whole days from today until a YYYY-MM-DD date; negative once past.
+    // Parsed at local midnight so a date never reads a day early in the US.
+    function daysUntil(dateStr) {
+        if (!dateStr) return null;
+        const target = new Date(dateStr + 'T00:00:00');
+        if (isNaN(target.getTime())) return null;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return Math.round((target - today) / 86400000);
+    }
+
+    function expiryState(item) {
+        if (item.status !== 'active') return null;
+        const days = daysUntil(item.expiration);
+        if (days === null) return null;
+        if (days < 0) return { level: 'expired', days, label: 'Expired' };
+        if (days <= EXPIRY_WARN_DAYS) {
+            return { level: 'expiring', days, label: days === 0 ? 'Expires today' : 'Expires in ' + days + 'd' };
+        }
+        return null;
+    }
+
     // ==================== Main App ====================
     class App {
         constructor() {
@@ -305,6 +593,7 @@
             this.selectedBottles = new Set();
             this.selectedMoveBottles = new Set();
             this.modalTarget = null; // 'names' or 'locations'
+            this.editingId = null;   // set while the form is editing an existing entry
         }
 
         getGeminiKey() {
@@ -324,21 +613,23 @@
             const fbUrl = this.getFirebaseUrl();
             const labKey = this.getLabKey();
             if (fbUrl) {
-                this.db = new FirebaseDB(fbUrl, labKey);
-                try {
-                    await this.db.init();
-                    // Start real-time sync (poll every 10s)
-                    this.db.startSync(() => {
-                        this.refreshInventory();
-                        this.loadSessionDropdowns();
-                    });
-                    showToast('Connected to shared database.', 'success');
-                } catch (e) {
-                    console.error('Firebase init failed:', e);
-                    showToast('Firebase failed: ' + (e.message || 'Unknown error'), 'error');
-                    this.db = new ChemDB();
-                    await this.db.init();
-                }
+                const synced = new SyncedDB(new FirebaseDB(fbUrl, labKey), new ChemDB());
+                synced.onStatusChange = (online, pending) => this.renderSyncStatus(online, pending);
+                this.db = synced;
+                const connected = await synced.init();
+                showToast(
+                    connected
+                        ? 'Connected to shared database.'
+                        : 'Offline — using local copy. Changes will sync when reconnected.',
+                    connected ? 'success' : 'error'
+                );
+                // Poll for other users' changes, but only when the result is
+                // actually on screen — refetching the whole inventory every
+                // 10s while someone is adding bottles is pure wasted data.
+                synced.startSync(() => {
+                    if (document.hidden) return;
+                    if (this.mode === 'inventory') this.refreshInventory();
+                });
             } else {
                 this.db = new ChemDB();
                 await this.db.init();
@@ -351,6 +642,22 @@
             }
             this.restoreSession();
             this.refreshInventory();
+        }
+
+        // ---- Sync Status ----
+        renderSyncStatus(online, pending) {
+            const el = document.getElementById('sync-status');
+            if (!el) return;
+            if (pending > 0) {
+                el.textContent = pending + ' unsynced';
+                el.className = 'sync-status pending';
+            } else if (!online) {
+                el.textContent = 'Offline';
+                el.className = 'sync-status offline';
+            } else {
+                el.textContent = '';
+                el.className = 'sync-status';
+            }
         }
 
         // ---- Session (Name + Location) ----
@@ -453,7 +760,8 @@
                 return;
             }
             items.push(value);
-            await this.db.saveList(this.modalTarget, items);
+            const ok = await this.write(() => this.db.saveList(this.modalTarget, items), 'Adding entry');
+            if (!ok) return;
             input.value = '';
             await this.refreshModalList();
             await this.loadSessionDropdowns();
@@ -463,7 +771,8 @@
         async removeListItem(value) {
             let items = await this.db.getList(this.modalTarget);
             items = items.filter(i => i !== value);
-            await this.db.saveList(this.modalTarget, items);
+            const ok = await this.write(() => this.db.saveList(this.modalTarget, items), 'Removing entry');
+            if (!ok) return;
             await this.refreshModalList();
             await this.loadSessionDropdowns();
             showToast('Removed: ' + value, 'success');
@@ -752,11 +1061,11 @@
             snapStatus.className = 'lookup-status loading';
 
             try {
-                // Convert image to base64
-                const base64 = await this.fileToBase64(file);
+                // Downscale and convert image to base64
+                const image = await this.fileToBase64(file);
 
                 // Call Gemini Vision API
-                const result = await this.analyzeWithGemini(base64);
+                const result = await this.analyzeWithGemini(image);
 
                 if (result) {
                     snapStatus.textContent = 'Label read successfully!';
@@ -812,25 +1121,60 @@
             }
         }
 
-        fileToBase64(file) {
-            return new Promise((resolve, reject) => {
+        // Phone cameras produce 3-5 MB JPEGs; base64 inflates that by a third
+        // again. Downscaling first cuts the upload roughly tenfold with no
+        // measurable loss in label legibility.
+        async fileToBase64(file, maxDimension = 1400) {
+            const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => {
-                    // Remove the data URL prefix to get raw base64
-                    const base64 = reader.result.split(',')[1];
-                    resolve(base64);
-                };
+                reader.onload = () => resolve(reader.result);
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
+            const original = {
+                data: dataUrl.split(',')[1],
+                mimeType: file.type || 'image/jpeg',
+            };
+
+            try {
+                const img = await new Promise((resolve, reject) => {
+                    const image = new Image();
+                    image.onload = () => resolve(image);
+                    image.onerror = reject;
+                    image.src = dataUrl;
+                });
+
+                const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+                if (scale === 1) return original;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(img.width * scale);
+                canvas.height = Math.round(img.height * scale);
+                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                return {
+                    data: canvas.toDataURL('image/jpeg', 0.85).split(',')[1],
+                    mimeType: 'image/jpeg',
+                };
+            } catch (e) {
+                // Canvas can fail on odd formats (HEIC, some CMYK JPEGs) —
+                // fall back to sending the original rather than losing the scan.
+                console.warn('Image downscale failed, sending original:', e);
+                return original;
+            }
         }
 
-        async analyzeWithGemini(imageBase64) {
+        async analyzeWithGemini(image) {
             const apiKey = this.getGeminiKey();
             if (!apiKey) throw new Error('No API key configured');
 
+            // A response schema makes the model return parseable JSON by
+            // construction, instead of asking for JSON in the prompt and
+            // regexing it back out of prose.
+            const fields = ['vendor', 'productNumber', 'productName', 'casNumber',
+                'amount', 'unit', 'lotNumber', 'expiration'];
+
             const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -838,27 +1182,34 @@
                         contents: [{
                             parts: [
                                 {
-                                    text: `Analyze this chemical product label image. Extract the following information and return ONLY valid JSON (no markdown, no code fences, no extra text):
-{
-  "vendor": "manufacturer or vendor name (e.g. Sigma-Aldrich, Fisher Scientific, Alfa Aesar)",
-  "productNumber": "catalog or product number",
-  "productName": "chemical or product name",
-  "casNumber": "CAS registry number in format XXXXX-XX-X",
-  "amount": "quantity number only (e.g. 500, 1, 2.5)",
-  "unit": "unit of measurement (g, kg, mg, mL, L, etc.)",
-  "lotNumber": "lot or batch number if visible",
-  "expiration": "expiration date in YYYY-MM-DD format if visible"
-}
-If a field is not visible or cannot be determined, use an empty string "". Be precise with the CAS number format.`
+                                    text: `Read this chemical product label image and extract:
+- vendor: manufacturer or vendor name (e.g. Sigma-Aldrich, Fisher Scientific, Alfa Aesar)
+- productNumber: catalog or product number
+- productName: chemical or product name
+- casNumber: CAS registry number, exactly in the format XXXXX-XX-X
+- amount: quantity number only (e.g. 500, 1, 2.5)
+- unit: unit of measurement (g, kg, mg, mL, L, etc.)
+- lotNumber: lot or batch number if visible
+- expiration: expiration date as YYYY-MM-DD if visible
+
+Use an empty string for any field that is not visible or cannot be determined. Do not guess.`
                                 },
                                 {
                                     inlineData: {
-                                        mimeType: 'image/jpeg',
-                                        data: imageBase64
+                                        mimeType: image.mimeType,
+                                        data: image.data
                                     }
                                 }
                             ]
-                        }]
+                        }],
+                        generationConfig: {
+                            responseMimeType: 'application/json',
+                            responseSchema: {
+                                type: 'OBJECT',
+                                properties: fields.reduce((acc, f) => (acc[f] = { type: 'STRING' }, acc), {}),
+                                required: fields,
+                            },
+                        }
                     })
                 }
             );
@@ -872,20 +1223,28 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!text) throw new Error('No response from AI');
 
-            // Parse JSON from response (handle possible markdown code blocks)
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    return JSON.parse(jsonMatch[0]);
-                } catch (e) {
-                    console.error('JSON parse failed:', jsonMatch[0]);
-                    throw new Error('Could not parse AI response');
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                // Belt and braces in case a future model wraps the JSON in prose.
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    try { return JSON.parse(jsonMatch[0]); } catch (e2) { /* fall through */ }
                 }
+                console.error('JSON parse failed:', text);
+                throw new Error('Could not parse AI response');
             }
-            throw new Error('No structured data in AI response');
         }
 
         bindEvents() {
+            // Coming back to the app is the moment stale dropdowns matter, so
+            // resync there instead of on a timer.
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) return;
+                this.loadSessionDropdowns().catch(e => console.error('Dropdown resync failed:', e));
+                if (this.mode === 'inventory') this.refreshInventory();
+            });
+
             // Session dropdowns - save on change
             document.getElementById('session-name').addEventListener('change', () => this.saveSession());
             document.getElementById('session-location').addEventListener('change', () => this.saveSession());
@@ -971,6 +1330,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             // Inventory search & filter
             document.getElementById('search-inventory').addEventListener('input', () => this.refreshInventory());
             document.getElementById('filter-status').addEventListener('change', () => this.refreshInventory());
+            document.getElementById('filter-location').addEventListener('change', () => this.refreshInventory());
 
             // Export
             document.getElementById('export-active').addEventListener('click', () => this.exportXLSX('active'));
@@ -1017,6 +1377,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
                 document.getElementById('move-destination').style.display = 'none';
                 this.populateMoveLocations();
             } else if (mode === 'inventory') {
+                this.populateLocationFilter();
                 this.refreshInventory();
             }
         }
@@ -1129,7 +1490,7 @@ If a field is not visible or cannot be determined, use an empty string "". Be pr
             if (!apiKey) return null;
 
             const response = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1217,8 +1578,30 @@ If a field cannot be determined, use empty string "".`
                 return;
             }
 
+            if (this.editingId) {
+                await this.saveEdit({ barcode, vendor, productNumber, productName, casNumber, amount, unit, expiration, notes });
+                return;
+            }
+
+            // Warn on a bottle that looks like one already on the same shelf —
+            // usually a double-scan rather than a genuine second bottle.
+            const existing = await this.db.getAllItems();
+            const duplicates = existing.filter(i =>
+                i.status === 'active' &&
+                (i.productNumber || '').toLowerCase() === productNumber.toLowerCase() &&
+                (i.location || '') === location
+            );
+            if (duplicates.length > 0) {
+                const proceed = confirm(
+                    `${duplicates.length} active bottle${duplicates.length !== 1 ? 's' : ''} of ${productNumber} ` +
+                    `${duplicates.length !== 1 ? 'are' : 'is'} already recorded at ${location || 'this location'}.\n\n` +
+                    `Add another one anyway?`
+                );
+                if (!proceed) return;
+            }
+
             // Save chemical template for future auto-fill
-            await this.db.saveChemical({
+            const templateSaved = await this.write(() => this.db.saveChemical({
                 barcode,
                 vendor,
                 productNumber,
@@ -1226,7 +1609,8 @@ If a field cannot be determined, use empty string "".`
                 casNumber,
                 amount,
                 unit,
-            });
+            }), 'Saving chemical details');
+            if (!templateSaved) return;
 
             // Create inventory item
             const item = {
@@ -1246,17 +1630,86 @@ If a field cannot be determined, use empty string "".`
                 status: 'active',
                 dateIn: new Date().toISOString(),
                 dateOut: null,
+                history: [],
             };
 
-            await this.db.addItem(item);
+            const ok = await this.write(() => this.db.addItem(item), 'Adding to inventory');
+            if (!ok) return;
             feedbackSuccess();
             showToast(`Added: ${productName} (${amount} ${unit})`, 'success');
             this.hideForm();
             this.refreshInventory();
         }
 
+        // ---- Editing an existing entry ----
+        async startEdit(id) {
+            const item = await this.db.getItem(id);
+            if (!item) {
+                showToast('Entry not found.', 'error');
+                return;
+            }
+
+            this.setMode('input');
+            this.editingId = id;
+
+            document.getElementById('chem-form').reset();
+            document.getElementById('f-barcode').value = item.barcode || '';
+            document.getElementById('f-vendor').value = item.vendor || '';
+            document.getElementById('f-product-number').value = item.productNumber || '';
+            document.getElementById('f-product-name').value = item.productName || '';
+            document.getElementById('f-cas').value = item.casNumber || '';
+            document.getElementById('f-amount').value = item.amount || '';
+            document.getElementById('f-unit').value = item.unit || 'mL';
+            document.getElementById('f-expiration').value = item.expiration || '';
+            document.getElementById('f-notes').value = item.notes || '';
+
+            const locations = await this.db.getList('locations');
+            this.populateSelect('f-location', locations.slice());
+            document.getElementById('f-location').value = item.location || '';
+
+            document.getElementById('form-title').textContent = 'Edit Entry';
+            document.getElementById('form-submit').textContent = 'Save Changes';
+            document.getElementById('f-location').closest('.form-group').style.display = '';
+            document.getElementById('autofill-notice').style.display = 'none';
+            this.setLookupStatus('');
+
+            const form = document.getElementById('chemical-form');
+            form.style.display = '';
+            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        async saveEdit(fields) {
+            const item = await this.db.getItem(this.editingId);
+            if (!item) {
+                showToast('Entry no longer exists.', 'error');
+                this.hideForm();
+                return;
+            }
+
+            const by = this.getSessionName() || '';
+            const at = new Date().toISOString();
+            const newLocation = document.getElementById('f-location').value;
+            if (newLocation && newLocation !== item.location) {
+                this.addHistory(item, 'moved', { from: item.location || '', to: newLocation, by, at });
+                item.location = newLocation;
+            }
+            Object.assign(item, fields);
+            this.addHistory(item, 'edited', { by, at });
+
+            const ok = await this.write(() => this.db.updateItem(item), 'Saving changes');
+            if (!ok) return;
+            feedbackSuccess();
+            showToast('Updated: ' + item.productName, 'success');
+            this.hideForm();
+            this.setMode('inventory');
+        }
+
         hideForm() {
             document.getElementById('chemical-form').style.display = 'none';
+            this.editingId = null;
+            document.getElementById('form-title').textContent = 'Add Chemical to Inventory';
+            document.getElementById('form-submit').textContent = 'Add to Inventory';
+            document.getElementById('f-location').closest('.form-group').style.display = 'none';
         }
 
         // ---- Output Mode: Select Bottles ----
@@ -1277,13 +1730,8 @@ If a field cannot be determined, use empty string "".`
             }
 
             const allItems = await this.db.getAllItems();
-            const items = allItems.filter(i => i.status === 'active' && (
-                (i.productName || '').toLowerCase().includes(query) ||
-                (i.vendor || '').toLowerCase().includes(query) ||
-                (i.productNumber || '').toLowerCase().includes(query) ||
-                (i.casNumber || '').toLowerCase().includes(query) ||
-                (i.barcode || '').toLowerCase().includes(query) ||
-                (i.location || '').toLowerCase().includes(query)
+            const items = allItems.filter(i => i.status === 'active' && this.matchesQuery(i, query,
+                ['productName', 'vendor', 'productNumber', 'casNumber', 'barcode', 'location']
             ));
 
             this.selectedBottles.clear();
@@ -1330,9 +1778,6 @@ If a field cannot be determined, use empty string "".`
                     list.appendChild(div);
                 });
             }
-
-            section.style.display = '';
-            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         async disposeSelected() {
@@ -1345,16 +1790,20 @@ If a field cannot be determined, use empty string "".`
             const removedBy = this.getSessionName();
             let count = 0;
 
-            for (const id of this.selectedBottles) {
-                const item = await this.db.getItem(id);
-                if (item && item.status === 'active') {
-                    item.status = 'disposed';
-                    item.dateOut = now;
-                    item.removedBy = removedBy;
-                    await this.db.updateItem(item);
-                    count++;
+            const ok = await this.write(async () => {
+                for (const id of this.selectedBottles) {
+                    const item = await this.db.getItem(id);
+                    if (item && item.status === 'active') {
+                        item.status = 'disposed';
+                        item.dateOut = now;
+                        item.removedBy = removedBy;
+                        this.addHistory(item, 'disposed', { by: removedBy, at: now });
+                        await this.db.updateItem(item);
+                        count++;
+                    }
                 }
-            }
+            }, 'Removing bottles');
+            if (!ok) return;
 
             feedbackRemove();
             showToast(`Removed ${count} bottle${count !== 1 ? 's' : ''} from inventory.`, 'success');
@@ -1398,12 +1847,8 @@ If a field cannot be determined, use empty string "".`
             }
 
             const allItems = await this.db.getAllItems();
-            const items = allItems.filter(i => i.status === 'active' && (
-                (i.productName || '').toLowerCase().includes(query) ||
-                (i.vendor || '').toLowerCase().includes(query) ||
-                (i.productNumber || '').toLowerCase().includes(query) ||
-                (i.casNumber || '').toLowerCase().includes(query) ||
-                (i.location || '').toLowerCase().includes(query)
+            const items = allItems.filter(i => i.status === 'active' && this.matchesQuery(i, query,
+                ['productName', 'vendor', 'productNumber', 'casNumber', 'location']
             ));
 
             this.selectedMoveBottles.clear();
@@ -1460,16 +1905,22 @@ If a field cannot be determined, use empty string "".`
                 return;
             }
 
+            const now = new Date().toISOString();
             let count = 0;
-            for (const id of this.selectedMoveBottles) {
-                const item = await this.db.getItem(id);
-                if (item && item.status === 'active') {
-                    item.location = newLocation;
-                    item.notes = (item.notes ? item.notes + ' | ' : '') + 'Moved by ' + movedBy + ' on ' + new Date().toLocaleDateString();
-                    await this.db.updateItem(item);
-                    count++;
+            const ok = await this.write(async () => {
+                for (const id of this.selectedMoveBottles) {
+                    const item = await this.db.getItem(id);
+                    if (item && item.status === 'active') {
+                        // Record the move in history rather than appending to notes,
+                        // which used to grow unreadable after a few relocations.
+                        this.addHistory(item, 'moved', { from: item.location || '', to: newLocation, by: movedBy, at: now });
+                        item.location = newLocation;
+                        await this.db.updateItem(item);
+                        count++;
+                    }
                 }
-            }
+            }, 'Moving bottles');
+            if (!ok) return;
 
             feedbackSuccess();
             showToast(`Moved ${count} bottle${count !== 1 ? 's' : ''} to ${newLocation}.`, 'success');
@@ -1485,10 +1936,16 @@ If a field cannot be determined, use empty string "".`
         }
 
         // ---- Inventory Display ----
+        async populateLocationFilter() {
+            const locations = await this.db.getList('locations');
+            this.populateSelect('filter-location', locations.slice());
+        }
+
         async refreshInventory() {
             const allItems = await this.db.getAllItems();
             const search = document.getElementById('search-inventory').value.toLowerCase().trim();
             const filterStatus = document.getElementById('filter-status').value;
+            const filterLocation = document.getElementById('filter-location').value;
 
             // Update count badge
             const activeCount = allItems.filter(i => i.status === 'active').length;
@@ -1497,12 +1954,17 @@ If a field cannot be determined, use empty string "".`
             const listEl = document.getElementById('inventory-list');
             const emptyEl = document.getElementById('inventory-empty');
 
-            // Require search query to show results (avoid loading hundreds of items)
-            if (search.length < 2) {
+            this.renderExpiryBanner(allItems);
+
+            // A search term is normally required so we don't render hundreds of
+            // cards, but picking a location or the Expiring filter is itself a
+            // narrowing choice — those browse without one.
+            const browsing = !!filterLocation || filterStatus === 'expiring';
+            if (search.length < 2 && !browsing) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = '';
                 emptyEl.textContent = activeCount > 0
-                    ? activeCount + ' item' + (activeCount !== 1 ? 's' : '') + ' in inventory. Type to search.'
+                    ? activeCount + ' item' + (activeCount !== 1 ? 's' : '') + ' in inventory. Search, or pick a location to browse.'
                     : 'No items in inventory yet. Scan a chemical to get started.';
                 return;
             }
@@ -1510,39 +1972,48 @@ If a field cannot be determined, use empty string "".`
             let items = allItems;
 
             // Filter by status
-            if (filterStatus !== 'all') {
+            if (filterStatus === 'expiring') {
+                items = items.filter(i => expiryState(i));
+            } else if (filterStatus !== 'all') {
                 items = items.filter(i => i.status === filterStatus);
             }
 
-            // Search
-            items = items.filter(i =>
-                (i.productName || '').toLowerCase().includes(search) ||
-                (i.vendor || '').toLowerCase().includes(search) ||
-                (i.productNumber || '').toLowerCase().includes(search) ||
-                (i.casNumber || '').toLowerCase().includes(search) ||
-                (i.location || '').toLowerCase().includes(search) ||
-                (i.addedBy || '').toLowerCase().includes(search) ||
-                (i.notes || '').toLowerCase().includes(search)
-            );
+            if (filterLocation) {
+                items = items.filter(i => (i.location || '') === filterLocation);
+            }
 
-            // Sort: active first, then by dateIn descending
+            // Search
+            if (search) {
+                items = items.filter(i => this.matchesQuery(i, search,
+                    ['productName', 'vendor', 'productNumber', 'casNumber', 'location', 'addedBy', 'notes']
+                ));
+            }
+
+            // Sort: active first, then soonest expiry, then newest
             items.sort((a, b) => {
                 if (a.status !== b.status) return a.status === 'active' ? -1 : 1;
+                const ea = daysUntil(a.expiration), eb = daysUntil(b.expiration);
+                if (filterStatus === 'expiring' && ea !== null && eb !== null) return ea - eb;
                 return new Date(b.dateIn) - new Date(a.dateIn);
             });
 
             if (items.length === 0) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = '';
-                emptyEl.textContent = 'No results for "' + search + '".';
+                emptyEl.textContent = search
+                    ? 'No results for "' + search + '".'
+                    : 'Nothing here.';
                 return;
             }
 
             emptyEl.style.display = 'none';
-            listEl.innerHTML = items.map(item => `
-                <div class="inv-card ${item.status === 'disposed' ? 'disposed' : ''}">
+            listEl.innerHTML = items.map(item => {
+                const expiry = expiryState(item);
+                return `
+                <div class="inv-card ${item.status === 'disposed' ? 'disposed' : ''} ${expiry ? expiry.level : ''}">
                     <div class="inv-header">
                         <div class="inv-name">${this.esc(item.productName)}</div>
+                        ${expiry ? `<span class="inv-status ${expiry.level}">${expiry.label}</span>` : ''}
                         <span class="inv-status ${item.status}">${item.status}</span>
                     </div>
                     <div class="inv-meta">
@@ -1559,44 +2030,81 @@ If a field cannot be determined, use empty string "".`
                     <div class="inv-dates">
                         In: ${formatDate(item.dateIn)}
                         ${item.dateOut ? ' &bull; Out: ' + formatDate(item.dateOut) : ''}
+                        ${this.formatMoveHistory(item)}
                     </div>
                     <div class="inv-actions">
                         ${item.status === 'active'
                             ? `<button class="btn btn-danger" onclick="app.disposeSingle('${item.id}')">Dispose</button>`
                             : `<button class="btn btn-success" onclick="app.reactivate('${item.id}')">Reactivate</button>`
                         }
+                        <button class="btn btn-secondary" onclick="app.startEdit('${item.id}')">Edit</button>
                         <button class="btn btn-secondary" onclick="app.deleteItem('${item.id}')">Delete</button>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
+        }
+
+        formatMoveHistory(item) {
+            const moves = (item.history || []).filter(h => h.action === 'moved');
+            if (moves.length === 0) return '';
+            const last = moves[moves.length - 1];
+            const extra = moves.length > 1 ? ` (${moves.length} moves)` : '';
+            return `<br>Moved from ${this.esc(last.from || '—')} by ${this.esc(last.by || '—')} on ${formatDateShort(last.at)}${extra}`;
+        }
+
+        renderExpiryBanner(allItems) {
+            const banner = document.getElementById('expiry-banner');
+            if (!banner) return;
+            const states = allItems.map(expiryState).filter(Boolean);
+            const expired = states.filter(s => s.level === 'expired').length;
+            const soon = states.filter(s => s.level === 'expiring').length;
+            if (expired === 0 && soon === 0) {
+                banner.style.display = 'none';
+                return;
+            }
+            const parts = [];
+            if (expired) parts.push(expired + ' expired');
+            if (soon) parts.push(soon + ' expiring within ' + EXPIRY_WARN_DAYS + ' days');
+            banner.textContent = parts.join(' · ');
+            banner.style.display = '';
         }
 
         async disposeSingle(id) {
             const item = await this.db.getItem(id);
-            if (item) {
+            if (!item) return;
+            const now = new Date().toISOString();
+            const by = this.getSessionName() || '';
+            const ok = await this.write(async () => {
                 item.status = 'disposed';
-                item.dateOut = new Date().toISOString();
-                item.removedBy = this.getSessionName() || '';
+                item.dateOut = now;
+                item.removedBy = by;
+                this.addHistory(item, 'disposed', { by, at: now });
                 await this.db.updateItem(item);
-                showToast('Marked as disposed.', 'success');
-                this.refreshInventory();
-            }
+            }, 'Disposing bottle');
+            if (!ok) return;
+            showToast('Marked as disposed.', 'success');
+            this.refreshInventory();
         }
 
         async reactivate(id) {
             const item = await this.db.getItem(id);
-            if (item) {
+            if (!item) return;
+            const ok = await this.write(async () => {
                 item.status = 'active';
                 item.dateOut = null;
+                this.addHistory(item, 'reactivated', { by: this.getSessionName() || '', at: new Date().toISOString() });
                 await this.db.updateItem(item);
-                showToast('Reactivated.', 'success');
-                this.refreshInventory();
-            }
+            }, 'Reactivating bottle');
+            if (!ok) return;
+            showToast('Reactivated.', 'success');
+            this.refreshInventory();
         }
 
         async deleteItem(id) {
             if (!confirm('Permanently delete this entry? This cannot be undone.')) return;
-            await this.db.deleteItem(id);
+            const ok = await this.write(() => this.db.deleteItem(id), 'Deleting entry');
+            if (!ok) return;
             showToast('Entry deleted.', 'success');
             this.refreshInventory();
         }
@@ -1702,38 +2210,38 @@ If a field cannot be determined, use empty string "".`
                 return;
             }
 
-            // Build log entries: one for each "in" and one for each "out"
+            // Build log entries: one per "in", "out", and recorded move.
+            // Sorting happens on the raw ISO timestamp — re-parsing a formatted
+            // locale string gives NaN in some browsers and scrambles the order.
             const logEntries = [];
+            const entry = (item, iso, action, person, location, notes) => ({
+                _ts: iso || '',
+                'Date': formatDate(iso),
+                'Action': action,
+                'Person': person || '',
+                'Product Name': item.productName,
+                'Vendor': item.vendor,
+                'Product Number': item.productNumber,
+                'CAS Number': item.casNumber || '',
+                'Amount': item.amount + ' ' + item.unit,
+                'Location': location || '',
+                'Notes': notes || '',
+            });
+
             allItems.forEach(item => {
-                logEntries.push({
-                    'Date': formatDate(item.dateIn),
-                    'Action': 'IN',
-                    'Person': item.addedBy || '',
-                    'Product Name': item.productName,
-                    'Vendor': item.vendor,
-                    'Product Number': item.productNumber,
-                    'CAS Number': item.casNumber || '',
-                    'Amount': item.amount + ' ' + item.unit,
-                    'Location': item.location || '',
-                    'Notes': item.notes || '',
-                });
+                logEntries.push(entry(item, item.dateIn, 'IN', item.addedBy, item.location, item.notes));
+                (item.history || [])
+                    .filter(h => h.action === 'moved')
+                    .forEach(h => logEntries.push(
+                        entry(item, h.at, 'MOVE', h.by, h.to, 'From: ' + (h.from || '—'))
+                    ));
                 if (item.dateOut) {
-                    logEntries.push({
-                        'Date': formatDate(item.dateOut),
-                        'Action': 'OUT',
-                        'Person': item.removedBy || '',
-                        'Product Name': item.productName,
-                        'Vendor': item.vendor,
-                        'Product Number': item.productNumber,
-                        'CAS Number': item.casNumber || '',
-                        'Amount': item.amount + ' ' + item.unit,
-                        'Location': item.location || '',
-                        'Notes': item.notes || '',
-                    });
+                    logEntries.push(entry(item, item.dateOut, 'OUT', item.removedBy, item.location, item.notes));
                 }
             });
 
-            logEntries.sort((a, b) => new Date(a.Date) - new Date(b.Date));
+            logEntries.sort((a, b) => a._ts.localeCompare(b._ts));
+            logEntries.forEach(e => delete e._ts);
 
             const wb = XLSX.utils.book_new();
             const sheet = XLSX.utils.json_to_sheet(logEntries);
@@ -1758,6 +2266,39 @@ If a field cannot be determined, use empty string "".`
         }
 
         // ---- Utility ----
+        // Runs a database mutation and reports failures to the user. Without this
+        // a dropped connection rejects silently and the entry is quietly lost.
+        async write(operation, description) {
+            try {
+                await operation();
+                return true;
+            } catch (e) {
+                console.error(description + ' failed:', e);
+                feedbackError();
+                showToast(description + ' failed — ' + (e.message || 'check your connection.'), 'error');
+                return false;
+            }
+        }
+
+        // Appends an audit entry to an item. Kept on the item itself so it
+        // travels with the record and feeds the exported activity log.
+        addHistory(item, action, details) {
+            if (!Array.isArray(item.history)) item.history = [];
+            item.history.push(Object.assign({ action }, details));
+            return item;
+        }
+
+        // Splits the query on whitespace and requires every token to appear
+        // somewhere in the item, so "sigma sodium" matches regardless of order.
+        matchesQuery(item, query, fields) {
+            const tokens = (query || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+            if (tokens.length === 0) return true;
+            const haystack = fields
+                .map(f => (item[f] || '').toString().toLowerCase())
+                .join('   ');
+            return tokens.every(t => haystack.includes(t));
+        }
+
         esc(str) {
             if (!str) return '';
             const div = document.createElement('div');

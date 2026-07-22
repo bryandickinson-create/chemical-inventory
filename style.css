@@ -18,10 +18,58 @@
     --gray-700: #374151;
     --gray-800: #1f2937;
     --gray-900: #111827;
+    --warn: #d97706;
+    --warn-light: #fef3c7;
+    --warn-border: #fcd34d;
+    --warn-text: #92400e;
+    --info-light: #eff6ff;
+    --info-border: #bfdbfe;
+    --info-text: #1e40af;
+    /* Semantic surfaces — these are what flips in dark mode. */
+    --surface: #ffffff;
+    --page-bg: var(--gray-100);
+    --text: var(--gray-900);
     --radius: 10px;
     --radius-sm: 6px;
     --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --primary: #3b82f6;
+        --primary-hover: #60a5fa;
+        --success: #22c55e;
+        --success-hover: #16a34a;
+        --success-light: #14351f;
+        --success-border: #166534;
+        --danger: #ef4444;
+        --danger-hover: #dc2626;
+        --danger-light: #3b1414;
+        --danger-border: #7f1d1d;
+        --warn: #fbbf24;
+        --warn-light: #3a2a08;
+        --warn-border: #78350f;
+        --warn-text: #fcd34d;
+        --info-light: #16233d;
+        --info-border: #1e3a8a;
+        --info-text: #93c5fd;
+        /* Grays invert: 50 is now the darkest, 900 the lightest. */
+        --gray-50: #1c2028;
+        --gray-100: #232833;
+        --gray-200: #2f3542;
+        --gray-300: #3f4655;
+        --gray-400: #7d8698;
+        --gray-500: #a2abbc;
+        --gray-700: #d3d9e3;
+        --gray-800: #e8ecf2;
+        --gray-900: #f4f6fa;
+        --surface: #171a21;
+        --page-bg: #0f1116;
+        --text: var(--gray-900);
+        --shadow: 0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.4);
+        --shadow-md: 0 4px 8px rgba(0,0,0,0.55), 0 2px 4px rgba(0,0,0,0.4);
+    }
 }
 
 *, *::before, *::after {
@@ -32,8 +80,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background: var(--gray-100);
-    color: var(--gray-900);
+    background: var(--page-bg);
+    color: var(--text);
     line-height: 1.5;
     min-height: 100vh;
     padding-bottom: 3rem;
@@ -41,7 +89,7 @@ body {
 
 /* ==================== Header ==================== */
 header {
-    background: white;
+    background: var(--surface);
     padding: 0.75rem 1rem;
     box-shadow: var(--shadow-md);
     position: sticky;
@@ -78,6 +126,29 @@ header h1 {
     line-height: 1;
 }
 .settings-btn:hover { color: var(--gray-700); }
+
+.sync-status {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.sync-status:empty { display: none; }
+.sync-status.offline {
+    background: var(--gray-200);
+    color: var(--gray-700);
+}
+.sync-status.pending {
+    background: var(--warn-light);
+    color: var(--warn-text);
+}
 
 .settings-hint {
     font-size: 0.8rem;
@@ -140,7 +211,7 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
 
 /* ==================== Session Bar ==================== */
 .session-bar {
-    background: white;
+    background: var(--surface);
     border-bottom: 1px solid var(--gray-200);
     padding: 0.5rem 1rem;
     box-shadow: 0 1px 2px rgba(0,0,0,0.04);
@@ -186,9 +257,9 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
 }
 
 .session-warning {
-    background: #fffbeb;
-    border: 1px solid #fde68a;
-    color: #92400e;
+    background: var(--warn-light);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-text);
     padding: 0.5rem 0.75rem;
     border-radius: var(--radius-sm);
     font-size: 0.85rem;
@@ -208,7 +279,7 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
 }
 
 .modal {
-    background: white;
+    background: var(--surface);
     border-radius: var(--radius);
     box-shadow: 0 20px 60px rgba(0,0,0,0.2);
     width: 100%;
@@ -293,7 +364,7 @@ main {
 
 /* ==================== Cards ==================== */
 .card {
-    background: white;
+    background: var(--surface);
     border-radius: var(--radius);
     padding: 1.25rem;
     box-shadow: var(--shadow);
@@ -433,7 +504,7 @@ select {
     border-radius: var(--radius-sm);
     font-size: 0.95rem;
     font-family: inherit;
-    background: white;
+    background: var(--surface);
     color: var(--gray-900);
     transition: border-color 0.15s;
 }
@@ -484,9 +555,9 @@ input[readonly] {
 }
 
 .notice {
-    background: #eff6ff;
-    border: 1px solid #bfdbfe;
-    color: #1e40af;
+    background: var(--info-light);
+    border: 1px solid var(--info-border);
+    color: var(--info-text);
     padding: 0.5rem 0.75rem;
     border-radius: var(--radius-sm);
     font-size: 0.85rem;
@@ -669,6 +740,30 @@ input[readonly] {
     color: var(--danger);
 }
 
+.inv-status.expiring {
+    background: var(--warn-light);
+    color: var(--warn-text);
+}
+
+.inv-status.expired {
+    background: var(--danger-light);
+    color: var(--danger);
+}
+
+.inv-card.expiring { border-color: var(--warn-border); }
+.inv-card.expired { border-color: var(--danger-border); }
+
+.warn-banner {
+    background: var(--warn-light);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-text);
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+}
+
 .inv-meta {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -746,6 +841,23 @@ input[readonly] {
 }
 
 /* ==================== Responsive ==================== */
+/* Four mode buttons don't fit a narrow phone at the default size. */
+@media (max-width: 480px) {
+    .mode-btn {
+        padding: 0.55rem 0.3rem;
+        font-size: 0.78rem;
+        gap: 0.2rem;
+    }
+
+    .mode-icon {
+        font-size: 0.95rem;
+    }
+
+    .inv-meta {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (min-width: 768px) {
     main {
         max-width: 700px;

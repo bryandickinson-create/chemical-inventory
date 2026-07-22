@@ -1,7 +1,7 @@
 {
-  "name": "Dickinson Group Inventory (Beta)",
-  "short_name": "Inventory Beta",
-  "description": "Beta build of the Dickinson group chemical inventory.",
+  "name": "Dickinson Group Inventory",
+  "short_name": "Inventory",
+  "description": "Chemical inventory tracking for the Dickinson group.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
