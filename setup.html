@@ -168,7 +168,7 @@ kbd {
 
 <div class="card">
     <h2><span class="num">i</span> What you'll need</h2>
-    <p>Every device needs the same two values so it talks to the same shared database. A third value is optional and personal to each device.</p>
+    <p>Every device needs the same values, entered once per device. The first two are required; the third only powers the label camera.</p>
     <div class="need">
         <div class="need-head">
             <span class="need-name">Firebase Config</span>
@@ -186,9 +186,10 @@ kbd {
     <div class="need">
         <div class="need-head">
             <span class="need-name">Gemini API Key</span>
-            <span class="tag personal">Per device · optional</span>
+            <span class="tag shared">Same for everyone</span>
+            <span class="tag personal">Optional</span>
         </div>
-        <p>Powers "Snap Label". Without it, everything else still works.</p>
+        <p>Powers "Snap Label". One shared key covers the whole lab. Without it, everything else still works.</p>
     </div>
     <div class="note warn">
         <strong>Don't know your Firebase Config or Lab Key?</strong>
@@ -205,7 +206,7 @@ kbd {
         <li>Under <strong>Lab Key</strong>, tap <strong>Show</strong> to unmask it, then write it down or copy it.</li>
         <li>Close Settings.</li>
     </ol>
-    <p class="muted">The Gemini key can also be revealed with <strong>Show</strong>, but each person can just as easily use their own free key — see section 4.</p>
+    <p class="muted">The shared Gemini API key can be read the same way — tap <strong>Show</strong> next to it. See section 4.</p>
 
     <h3>If no device works yet</h3>
     <p>Then the database hasn't been created, or nobody has the key. See section 6 for starting from scratch.</p>
@@ -269,13 +270,26 @@ kbd {
 
 <div class="card">
     <h2><span class="num">4</span> Optional: Snap Label (AI)</h2>
-    <p>Lets you photograph a bottle label and have the fields filled in automatically. It's free for normal lab use, and each person can have their own key.</p>
-    <ol>
-        <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
-        <li>Click <strong>Create API key</strong> and copy it.</li>
-        <li>In the app: gear icon <strong>⚙</strong> → <strong>Google Gemini API Key</strong> → paste → <strong>Save</strong>.</li>
-    </ol>
-    <p class="muted">Skip this and everything else still works — you just type entries in by hand, and the manual lookup falls back to PubChem.</p>
+    <p>Lets you photograph a bottle label and have the fields filled in automatically.</p>
+    <p>The lab uses <strong>one shared key</strong> — don't create your own. Ask whoever runs the
+    inventory for it, then in the app: gear icon <strong>⚙</strong> →
+    <strong>Google Gemini API Key</strong> → paste → <strong>Save</strong>.</p>
+    <p class="muted">You still enter it once per device, the same as the Lab Key. Skip it entirely and
+    everything else works — you just type entries by hand, and manual lookup falls back to PubChem.</p>
+
+    <div class="note info">
+        <strong>Why one key is fine here.</strong> It sits on a Google Cloud project with
+        <em>no billing account</em>, so it can't run up a bill. If it leaks, the worst case is
+        someone using up the shared daily quota, Snap Label stops working until it resets, and we
+        swap in a new key. Treat it like the Lab Key: hand it over directly, don't post it anywhere.
+    </div>
+
+    <h3>For whoever manages the key</h3>
+    <p class="muted">Create it at
+    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+    in a dedicated project, and never attach billing to that project — the key list should keep showing
+    <strong>Billing Tier: Free tier</strong>. If quota runs out, delete the key, create a new one, and
+    redistribute.</p>
 </div>
 
 <div class="card">
