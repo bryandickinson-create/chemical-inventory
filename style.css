@@ -194,16 +194,6 @@ body.mode-input .mode-btn[data-mode="input"] {
     color: white;
 }
 
-body.mode-output .mode-btn[data-mode="output"] {
-    background: var(--danger);
-    color: white;
-}
-
-body.mode-move .mode-btn[data-mode="move"] {
-    background: var(--primary);
-    color: white;
-}
-
 body.mode-inventory .mode-btn[data-mode="inventory"] {
     background: var(--primary);
     color: white;
@@ -254,6 +244,12 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
 .btn-sm {
     padding: 0.35rem 0.55rem !important;
     font-size: 0.78rem !important;
+}
+
+.move-item-name {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0.15rem;
 }
 
 .session-warning {
@@ -488,13 +484,6 @@ body.mode-input .btn-primary:hover {
     background: var(--success-hover);
 }
 
-body.mode-output .btn-primary {
-    background: var(--danger);
-}
-body.mode-output .btn-primary:hover {
-    background: var(--danger-hover);
-}
-
 /* ==================== Forms ==================== */
 input[type="text"],
 select {
@@ -656,52 +645,6 @@ input[readonly] {
     margin-bottom: 0.75rem;
 }
 
-.bottle-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    border: 1.5px solid var(--gray-200);
-    border-radius: var(--radius-sm);
-    margin-bottom: 0.5rem;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-.bottle-item:hover {
-    border-color: var(--gray-300);
-    background: var(--gray-50);
-}
-
-.bottle-item.selected {
-    border-color: var(--danger-border);
-    background: var(--danger-light);
-}
-
-.bottle-item input[type="checkbox"] {
-    margin-top: 0.2rem;
-    width: 18px;
-    height: 18px;
-    accent-color: var(--danger);
-    flex-shrink: 0;
-}
-
-.bottle-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.bottle-name {
-    font-weight: 600;
-    font-size: 0.95rem;
-}
-
-.bottle-details {
-    color: var(--gray-500);
-    font-size: 0.82rem;
-    margin-top: 0.15rem;
-}
-
 /* ==================== Inventory ==================== */
 .section-header {
     display: flex;
@@ -841,6 +784,7 @@ input[readonly] {
     padding-top: 0.5rem;
     border-top: 1px solid var(--gray-100);
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
 }
 

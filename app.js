@@ -21,7 +21,7 @@
 
         async init() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open('ChemicalInventory', 3);
+                const request = indexedDB.open('ChemicalInventory', 4);
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
                     this.db = request.result;
@@ -43,6 +43,11 @@
                     // Managed lists (locations, names)
                     if (!db.objectStoreNames.contains('lists')) {
                         db.createObjectStore('lists', { keyPath: 'key' });
+                    }
+                    // Audit trail for actions that destroy the record itself,
+                    // so a deletion still leaves a trace of who did it.
+                    if (!db.objectStoreNames.contains('audit')) {
+                        db.createObjectStore('audit', { keyPath: 'id' });
                     }
                 };
             });
@@ -109,6 +114,15 @@
         async getActiveItemsByBarcode(barcode) {
             const items = await this.getItemsByBarcode(barcode);
             return items.filter(i => i.status === 'active');
+        }
+
+        // -- Audit trail --
+        async addAudit(entry) {
+            return this._req(this._tx('audit', 'readwrite').put(entry));
+        }
+
+        async getAllAudit() {
+            return this._req(this._tx('audit', 'readonly').getAll());
         }
     }
 
@@ -228,6 +242,16 @@
             return items.filter(i => i.status === 'active');
         }
 
+        // -- Audit trail --
+        async addAudit(entry) {
+            return this._set('audit/' + entry.id, entry);
+        }
+
+        async getAllAudit() {
+            const data = await this._get('audit');
+            return data ? Object.values(data) : [];
+        }
+
         // Poll for changes every 10 seconds instead of WebSocket
         startSync(callback) {
             this.pollInterval = setInterval(callback, 10000);
@@ -344,6 +368,7 @@
             }
             if (op.kind === 'chemical') return this.remote.saveChemical(op.value);
             if (op.kind === 'list') return this.remote.saveList(op.key, op.value);
+            if (op.kind === 'audit') return this.remote.addAudit(op.value);
             return Promise.resolve();
         }
 
@@ -485,6 +510,25 @@
             );
         }
 
+        addAudit(entry) {
+            return this._write(
+                () => this.local.addAudit(entry),
+                () => this.remote.addAudit(entry),
+                { kind: 'audit', key: entry.id, value: entry }
+            );
+        }
+
+        async getAllAudit() {
+            try {
+                const entries = await this.remote.getAllAudit();
+                this._setOnline(true);
+                return entries;
+            } catch (e) {
+                this._setOnline(false);
+                return this.local.getAllAudit();
+            }
+        }
+
         startSync(callback) {
             this.pollInterval = setInterval(() => {
                 this.flush();
@@ -597,9 +641,8 @@
     class App {
         constructor() {
             this.db = null; // Set in init()
-            this.mode = 'input'; // 'input', 'output', or 'move'
-            this.selectedBottles = new Set();
-            this.selectedMoveBottles = new Set();
+            this.mode = 'input'; // 'input' or 'inventory'
+            this.movingId = null; // item being relocated via the move modal
             this.modalTarget = null; // 'names' or 'locations'
             this.editingId = null;   // set while the form is editing an existing entry
             this.cameraStream = null; // live MediaStream while the in-app camera is open
@@ -1186,7 +1229,6 @@
                     snapStatus.className = 'lookup-status success';
 
                     // Show and fill the form
-                    this.hideOutputSelect();
                     const form = document.getElementById('chemical-form');
                     document.getElementById('chem-form').reset();
                     document.getElementById('autofill-notice').style.display = 'none';
@@ -1463,8 +1505,6 @@ Use an empty string for any field that is not visible or cannot be determined. D
 
             // Mode toggle
             document.getElementById('mode-input').addEventListener('click', () => this.setMode('input'));
-            document.getElementById('mode-output').addEventListener('click', () => this.setMode('output'));
-            document.getElementById('mode-move').addEventListener('click', () => this.setMode('move'));
             document.getElementById('mode-inventory').addEventListener('click', () => this.setMode('inventory'));
 
             // Manual entry
@@ -1483,16 +1523,12 @@ Use an empty string for any field that is not visible or cannot be determined. D
             });
             document.getElementById('cancel-form').addEventListener('click', () => this.hideForm());
 
-            // Output actions
-            document.getElementById('confirm-dispose').addEventListener('click', () => this.disposeSelected());
-            document.getElementById('output-search').addEventListener('input', () => {
-                this.showOutputSelect(document.getElementById('output-search').value);
-            });
-
-            // Move actions
-            document.getElementById('confirm-move').addEventListener('click', () => this.moveSelected());
-            document.getElementById('move-search').addEventListener('input', () => {
-                this.showMoveSelect(document.getElementById('move-search').value);
+            // Move modal (per-item, launched from an inventory card)
+            document.getElementById('move-confirm').addEventListener('click', () => this.confirmMove());
+            document.getElementById('move-cancel').addEventListener('click', () => this.closeMoveModal());
+            document.getElementById('move-close').addEventListener('click', () => this.closeMoveModal());
+            document.getElementById('move-modal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('move-modal')) this.closeMoveModal();
             });
 
             // Inventory search & filter
@@ -1515,38 +1551,22 @@ Use an empty string for any field that is not visible or cannot be determined. D
             this.endBatch();
 
             document.getElementById('mode-input').classList.toggle('active', mode === 'input');
-            document.getElementById('mode-output').classList.toggle('active', mode === 'output');
-            document.getElementById('mode-move').classList.toggle('active', mode === 'move');
             document.getElementById('mode-inventory').classList.toggle('active', mode === 'inventory');
 
             // Show/hide sections based on mode
             document.getElementById('scanner-section').style.display = mode === 'input' ? '' : 'none';
-            // Show Name in Add/Remove/Move, hide in Inventory
-            document.getElementById('session-name').closest('.session-field').style.display = mode === 'inventory' ? 'none' : '';
-            // Only show Location dropdown in Add mode
+            // Name is needed in both modes: to credit additions, and to record
+            // who disposed, moved, edited or deleted an entry.
+            document.getElementById('session-name').closest('.session-field').style.display = '';
+            // Location is the destination for new bottles, so Add mode only.
             document.getElementById('session-location').closest('.session-field').style.display = mode === 'input' ? '' : 'none';
             this.hideForm();
-            this.hideOutputSelect();
-            this.hideMoveSelect();
 
             // Inventory & export only visible in inventory mode
             document.getElementById('inventory-section').style.display = mode === 'inventory' ? '' : 'none';
             document.getElementById('export-section').style.display = mode === 'inventory' ? '' : 'none';
 
-            if (mode === 'output') {
-                document.getElementById('output-select').style.display = '';
-                document.getElementById('output-search').value = '';
-                document.getElementById('matching-bottles').innerHTML = '';
-                document.getElementById('no-bottles-msg').style.display = 'none';
-                document.getElementById('output-actions').style.display = 'none';
-            } else if (mode === 'move') {
-                document.getElementById('move-select').style.display = '';
-                document.getElementById('move-search').value = '';
-                document.getElementById('move-bottles').innerHTML = '';
-                document.getElementById('move-no-msg').style.display = 'none';
-                document.getElementById('move-destination').style.display = 'none';
-                this.populateMoveLocations();
-            } else if (mode === 'inventory') {
+            if (mode === 'inventory') {
                 this.populateLocationFilter();
                 this.refreshInventory();
             }
@@ -1812,6 +1832,7 @@ If a field cannot be determined, use empty string "".`
 
         // ---- Editing an existing entry ----
         async startEdit(id) {
+            if (!this.requireIdentity('edit an entry')) return;
             const item = await this.db.getItem(id);
             if (!item) {
                 showToast('Entry not found.', 'error');
@@ -1848,6 +1869,9 @@ If a field cannot be determined, use empty string "".`
         }
 
         async saveEdit(fields) {
+            // Re-check: the Name could have been cleared after the form opened.
+            const by = this.requireIdentity('save changes');
+            if (!by) return;
             const item = await this.db.getItem(this.editingId);
             if (!item) {
                 showToast('Entry no longer exists.', 'error');
@@ -1855,7 +1879,6 @@ If a field cannot be determined, use empty string "".`
                 return;
             }
 
-            const by = this.getSessionName() || '';
             const at = new Date().toISOString();
             const newLocation = document.getElementById('f-location').value;
             if (newLocation && newLocation !== item.location) {
@@ -1879,229 +1902,6 @@ If a field cannot be determined, use empty string "".`
             document.getElementById('form-title').textContent = 'Add Chemical to Inventory';
             document.getElementById('form-submit').textContent = 'Add to Inventory';
             document.getElementById('f-location').closest('.form-group').style.display = 'none';
-        }
-
-        // ---- Output Mode: Select Bottles ----
-        async showOutputSelect(searchQuery) {
-            const query = (searchQuery || '').toLowerCase().trim();
-            const list = document.getElementById('matching-bottles');
-            const noMsg = document.getElementById('no-bottles-msg');
-            const actions = document.getElementById('output-actions');
-
-            // Require at least 2 chars to search
-            if (query.length < 2) {
-                list.innerHTML = '';
-                noMsg.style.display = '';
-                noMsg.textContent = 'Type to search chemicals...';
-                actions.style.display = 'none';
-                this.selectedBottles.clear();
-                return;
-            }
-
-            const allItems = await this.db.getAllItems();
-            const items = allItems.filter(i => i.status === 'active' && this.matchesQuery(i, query,
-                ['productName', 'vendor', 'productNumber', 'casNumber', 'barcode', 'location']
-            ));
-
-            this.selectedBottles.clear();
-            list.innerHTML = '';
-
-            if (items.length === 0) {
-                noMsg.style.display = '';
-                noMsg.textContent = 'No matching chemicals found.';
-                actions.style.display = 'none';
-            } else {
-                noMsg.style.display = 'none';
-                actions.style.display = '';
-
-                items.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = 'bottle-item';
-                    div.innerHTML = `
-                        <input type="checkbox" data-id="${item.id}">
-                        <div class="bottle-info">
-                            <div class="bottle-name">${this.esc(item.productName)}</div>
-                            <div class="bottle-details">
-                                ${this.esc(item.vendor)} &bull; ${this.esc(item.productNumber)}
-                                ${item.casNumber ? ' &bull; CAS ' + this.esc(item.casNumber) : ''}
-                                <br>${this.esc(item.amount)} ${this.esc(item.unit)}
-                                ${item.location ? ' &bull; ' + this.esc(item.location) : ''}
-                                ${item.addedBy ? '<br>Added by: ' + this.esc(item.addedBy) : ''}
-                                <br>Added: ${formatDateShort(item.dateIn)}
-                                ${item.notes ? ' &bull; ' + this.esc(item.notes) : ''}
-                            </div>
-                        </div>
-                    `;
-
-                    const checkbox = div.querySelector('input[type="checkbox"]');
-                    div.addEventListener('click', (e) => {
-                        if (e.target !== checkbox) checkbox.checked = !checkbox.checked;
-                        div.classList.toggle('selected', checkbox.checked);
-                        if (checkbox.checked) {
-                            this.selectedBottles.add(item.id);
-                        } else {
-                            this.selectedBottles.delete(item.id);
-                        }
-                    });
-
-                    list.appendChild(div);
-                });
-            }
-        }
-
-        async disposeSelected() {
-            if (this.selectedBottles.size === 0) {
-                showToast('Select at least one bottle to remove.', 'error');
-                return;
-            }
-
-            const now = new Date().toISOString();
-            const removedBy = this.getSessionName();
-            let count = 0;
-
-            const ok = await this.write(async () => {
-                for (const id of this.selectedBottles) {
-                    const item = await this.db.getItem(id);
-                    if (item && item.status === 'active') {
-                        item.status = 'disposed';
-                        item.dateOut = now;
-                        item.removedBy = removedBy;
-                        this.addHistory(item, 'disposed', { by: removedBy, at: now });
-                        await this.db.updateItem(item);
-                        count++;
-                    }
-                }
-            }, 'Removing bottles');
-            if (!ok) return;
-
-            feedbackRemove();
-            showToast(`Removed ${count} bottle${count !== 1 ? 's' : ''} from inventory.`, 'success');
-            this.hideOutputSelect();
-            this.refreshInventory();
-        }
-
-        hideOutputSelect() {
-            document.getElementById('output-select').style.display = 'none';
-            this.selectedBottles.clear();
-        }
-
-        // ---- Move Mode ----
-        async populateMoveLocations() {
-            const locations = await this.db.getList('locations');
-            const sel = document.getElementById('move-location');
-            while (sel.options.length > 1) sel.remove(1);
-            locations.sort((a, b) => a.localeCompare(b));
-            locations.forEach(loc => {
-                const opt = document.createElement('option');
-                opt.value = loc;
-                opt.textContent = loc;
-                sel.appendChild(opt);
-            });
-        }
-
-        async showMoveSelect(searchQuery) {
-            const query = (searchQuery || '').toLowerCase().trim();
-            const list = document.getElementById('move-bottles');
-            const noMsg = document.getElementById('move-no-msg');
-            const destSection = document.getElementById('move-destination');
-
-            // Require at least 2 chars to search
-            if (query.length < 2) {
-                list.innerHTML = '';
-                noMsg.style.display = '';
-                noMsg.textContent = 'Type to search chemicals...';
-                destSection.style.display = 'none';
-                this.selectedMoveBottles.clear();
-                return;
-            }
-
-            const allItems = await this.db.getAllItems();
-            const items = allItems.filter(i => i.status === 'active' && this.matchesQuery(i, query,
-                ['productName', 'vendor', 'productNumber', 'casNumber', 'location']
-            ));
-
-            this.selectedMoveBottles.clear();
-            list.innerHTML = '';
-
-            if (items.length === 0) {
-                noMsg.style.display = '';
-                destSection.style.display = 'none';
-            } else {
-                noMsg.style.display = 'none';
-                destSection.style.display = '';
-
-                items.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = 'bottle-item';
-                    div.innerHTML = `
-                        <input type="checkbox" data-id="${item.id}">
-                        <div class="bottle-info">
-                            <div class="bottle-name">${this.esc(item.productName)}</div>
-                            <div class="bottle-details">
-                                ${this.esc(item.vendor)} &bull; ${this.esc(item.productNumber)}
-                                <br>${this.esc(item.amount)} ${this.esc(item.unit)}
-                                ${item.location ? ' &bull; <strong>' + this.esc(item.location) + '</strong>' : ''}
-                            </div>
-                        </div>
-                    `;
-                    const checkbox = div.querySelector('input[type="checkbox"]');
-                    div.addEventListener('click', (e) => {
-                        if (e.target !== checkbox) checkbox.checked = !checkbox.checked;
-                        div.classList.toggle('selected', checkbox.checked);
-                        if (checkbox.checked) this.selectedMoveBottles.add(item.id);
-                        else this.selectedMoveBottles.delete(item.id);
-                    });
-                    list.appendChild(div);
-                });
-            }
-        }
-
-        async moveSelected() {
-            if (this.selectedMoveBottles.size === 0) {
-                showToast('Select at least one bottle to move.', 'error');
-                feedbackError();
-                return;
-            }
-            const newLocation = document.getElementById('move-location').value;
-            if (!newLocation) {
-                showToast('Select a destination location.', 'error');
-                feedbackError();
-                return;
-            }
-            const movedBy = this.getSessionName();
-            if (!movedBy) {
-                showToast('Select your Name first.', 'error');
-                return;
-            }
-
-            const now = new Date().toISOString();
-            let count = 0;
-            const ok = await this.write(async () => {
-                for (const id of this.selectedMoveBottles) {
-                    const item = await this.db.getItem(id);
-                    if (item && item.status === 'active') {
-                        // Record the move in history rather than appending to notes,
-                        // which used to grow unreadable after a few relocations.
-                        this.addHistory(item, 'moved', { from: item.location || '', to: newLocation, by: movedBy, at: now });
-                        item.location = newLocation;
-                        await this.db.updateItem(item);
-                        count++;
-                    }
-                }
-            }, 'Moving bottles');
-            if (!ok) return;
-
-            feedbackSuccess();
-            showToast(`Moved ${count} bottle${count !== 1 ? 's' : ''} to ${newLocation}.`, 'success');
-            this.selectedMoveBottles.clear();
-            document.getElementById('move-search').value = '';
-            this.showMoveSelect('');
-            this.refreshInventory();
-        }
-
-        hideMoveSelect() {
-            document.getElementById('move-select').style.display = 'none';
-            this.selectedMoveBottles.clear();
         }
 
         // ---- Inventory Display ----
@@ -2206,6 +2006,10 @@ If a field cannot be determined, use empty string "".`
                             ? `<button class="btn btn-danger" onclick="app.disposeSingle('${item.id}')">Dispose</button>`
                             : `<button class="btn btn-success" onclick="app.reactivate('${item.id}')">Reactivate</button>`
                         }
+                        ${item.status === 'active'
+                            ? `<button class="btn btn-primary" onclick="app.startMove('${item.id}')">Move</button>`
+                            : ''
+                        }
                         <button class="btn btn-secondary" onclick="app.startEdit('${item.id}')">Edit</button>
                         <button class="btn btn-secondary" onclick="app.deleteItem('${item.id}')">Delete</button>
                     </div>
@@ -2239,11 +2043,82 @@ If a field cannot be determined, use empty string "".`
             banner.style.display = '';
         }
 
+        // Every change to an existing entry is attributed, so nothing in the
+        // shared inventory can be altered anonymously.
+        requireIdentity(action) {
+            const who = this.getSessionName();
+            if (!who) {
+                showToast(`Select your Name at the top before you ${action}.`, 'error');
+                feedbackError();
+                const sel = document.getElementById('session-name');
+                sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                sel.focus();
+                return null;
+            }
+            return who;
+        }
+
+        // ---- Move a single bottle ----
+        async startMove(id) {
+            if (!this.requireIdentity('move a bottle')) return;
+            const item = await this.db.getItem(id);
+            if (!item) {
+                showToast('Entry not found.', 'error');
+                return;
+            }
+            this.movingId = id;
+            document.getElementById('move-item-name').textContent = item.productName || item.productNumber || 'Bottle';
+            document.getElementById('move-current-location').textContent = item.location || 'no location';
+
+            const locations = await this.db.getList('locations');
+            this.populateSelect('move-to-location', locations.slice());
+            // Don't preselect where it already is.
+            document.getElementById('move-to-location').value = '';
+            document.getElementById('move-modal').style.display = '';
+        }
+
+        closeMoveModal() {
+            document.getElementById('move-modal').style.display = 'none';
+            this.movingId = null;
+        }
+
+        async confirmMove() {
+            const by = this.requireIdentity('move a bottle');
+            if (!by) return;
+            const newLocation = document.getElementById('move-to-location').value;
+            if (!newLocation) {
+                showToast('Select a destination location.', 'error');
+                return;
+            }
+            const item = await this.db.getItem(this.movingId);
+            if (!item) {
+                showToast('Entry no longer exists.', 'error');
+                this.closeMoveModal();
+                return;
+            }
+            if (item.location === newLocation) {
+                showToast('Already in that location.', 'error');
+                return;
+            }
+
+            const from = item.location || '';
+            this.addHistory(item, 'moved', { from, to: newLocation, by, at: new Date().toISOString() });
+            item.location = newLocation;
+
+            const ok = await this.write(() => this.db.updateItem(item), 'Moving bottle');
+            if (!ok) return;
+            feedbackSuccess();
+            showToast(`Moved to ${newLocation}.`, 'success');
+            this.closeMoveModal();
+            this.refreshInventory();
+        }
+
         async disposeSingle(id) {
+            const by = this.requireIdentity('dispose of a bottle');
+            if (!by) return;
             const item = await this.db.getItem(id);
             if (!item) return;
             const now = new Date().toISOString();
-            const by = this.getSessionName() || '';
             const ok = await this.write(async () => {
                 item.status = 'disposed';
                 item.dateOut = now;
@@ -2257,12 +2132,14 @@ If a field cannot be determined, use empty string "".`
         }
 
         async reactivate(id) {
+            const by = this.requireIdentity('reactivate a bottle');
+            if (!by) return;
             const item = await this.db.getItem(id);
             if (!item) return;
             const ok = await this.write(async () => {
                 item.status = 'active';
                 item.dateOut = null;
-                this.addHistory(item, 'reactivated', { by: this.getSessionName() || '', at: new Date().toISOString() });
+                this.addHistory(item, 'reactivated', { by, at: new Date().toISOString() });
                 await this.db.updateItem(item);
             }, 'Reactivating bottle');
             if (!ok) return;
@@ -2271,8 +2148,31 @@ If a field cannot be determined, use empty string "".`
         }
 
         async deleteItem(id) {
-            if (!confirm('Permanently delete this entry? This cannot be undone.')) return;
-            const ok = await this.write(() => this.db.deleteItem(id), 'Deleting entry');
+            const by = this.requireIdentity('delete an entry');
+            if (!by) return;
+            const item = await this.db.getItem(id);
+            if (!item) return;
+            if (!confirm(`Permanently delete "${item.productName || item.productNumber}"?\n\nThis cannot be undone. The deletion will be recorded against your name.`)) return;
+
+            const ok = await this.write(async () => {
+                // Deleting destroys the record and its history, so the audit
+                // entry is written first — otherwise there'd be no trace of who
+                // removed what.
+                await this.db.addAudit({
+                    id: generateId(),
+                    at: new Date().toISOString(),
+                    by,
+                    action: 'deleted',
+                    itemId: item.id,
+                    productName: item.productName || '',
+                    productNumber: item.productNumber || '',
+                    vendor: item.vendor || '',
+                    amount: (item.amount || '') + ' ' + (item.unit || ''),
+                    location: item.location || '',
+                    notes: item.notes || '',
+                });
+                await this.db.deleteItem(id);
+            }, 'Deleting entry');
             if (!ok) return;
             showToast('Entry deleted.', 'success');
             this.refreshInventory();
@@ -2408,6 +2308,23 @@ If a field cannot be determined, use empty string "".`
                     logEntries.push(entry(item, item.dateOut, 'OUT', item.removedBy, item.location, item.notes));
                 }
             });
+
+            // Deleted entries no longer exist in the inventory, so their record
+            // comes from the audit trail instead.
+            const audit = await this.db.getAllAudit().catch(() => []);
+            audit.forEach(a => logEntries.push({
+                _ts: a.at || '',
+                'Date': formatDate(a.at),
+                'Action': (a.action || 'audit').toUpperCase(),
+                'Person': a.by || '',
+                'Product Name': a.productName || '',
+                'Vendor': a.vendor || '',
+                'Product Number': a.productNumber || '',
+                'CAS Number': '',
+                'Amount': a.amount || '',
+                'Location': a.location || '',
+                'Notes': a.notes || '',
+            }));
 
             logEntries.sort((a, b) => a._ts.localeCompare(b._ts));
             logEntries.forEach(e => delete e._ts);
