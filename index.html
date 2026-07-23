@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Inventory">
     <!-- Versioned like app.js: without it a cached stylesheet can outlive a
          deploy, leaving new markup styled by old CSS. Bump with CACHE_VERSION. -->
-    <link rel="stylesheet" href="style.css?v=43">
+    <link rel="stylesheet" href="style.css?v=45">
 </head>
 <body class="mode-input">
     <header>
@@ -157,17 +157,19 @@
                 <button id="snap-label" class="btn btn-primary btn-large">
                     <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
                 </button>
-                <input type="file" id="label-capture" accept="image/*" capture="environment" style="display:none">
+                <input type="file" id="label-capture" accept="image/*" capture="environment" multiple style="display:none">
                 <!-- In-app camera. Avoids the OS "Use Photo" confirmation that a
                      file input forces; one tap goes straight to analysis. -->
                 <div id="camera-view" class="camera-view" style="display:none">
                     <video id="camera-stream" playsinline muted autoplay></video>
-                    <p class="camera-hint">Fill the frame with the label, then tap the circle.</p>
+                    <div id="camera-thumbs" class="camera-thumbs" style="display:none"></div>
+                    <p class="camera-hint"></p>
                     <div class="camera-controls">
                         <button type="button" id="camera-cancel" class="btn btn-secondary">Cancel</button>
                         <button type="button" id="camera-shutter" class="camera-shutter" aria-label="Capture label"></button>
                         <button type="button" id="camera-pick" class="btn btn-secondary">Library</button>
                     </div>
+                    <button type="button" id="camera-add" class="btn btn-secondary camera-add">&#43; Add another photo</button>
                 </div>
                 <label class="auto-submit-toggle">
                     <input type="checkbox" id="auto-submit"> Auto-add (skip review)
@@ -306,7 +308,7 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=44"></script>
+    <script src="app.js?v=45"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {

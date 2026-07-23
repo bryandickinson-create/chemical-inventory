@@ -649,6 +649,7 @@
             this.batchCount = 0;      // bottles added in the current auto-add run
             this.approvedDuplicates = new Set(); // "productNumber|location" the user already OK'd this batch
             this.expandedGroups = new Set(); // group keys currently expanded in the inventory list
+            this.pendingShots = [];  // extra photos of the current label, awaiting analysis together
         }
 
         getGeminiKey() {
@@ -1288,8 +1289,47 @@
             document.body.classList.add('camera-open');
             document.getElementById('camera-shutter').disabled = false;
             document.getElementById('snap-status').textContent = '';
+            this.renderThumbs();
             document.getElementById('camera-view').scrollIntoView({ behavior: 'smooth', block: 'center' });
             return true;
+        }
+
+        // ---- Multi-photo capture ----
+        // Small bottles can need several photos to catch every field. Each
+        // "Add another" stashes the current frame; the shutter captures the
+        // final frame and analyzes them all together as one label.
+        renderThumbs() {
+            const wrap = document.getElementById('camera-thumbs');
+            const hint = document.querySelector('.camera-hint');
+            const n = this.pendingShots.length;
+            if (wrap) {
+                wrap.style.display = n ? 'flex' : 'none';
+                wrap.innerHTML = this.pendingShots.map((im, i) => `
+                    <div class="thumb">
+                        <img src="data:${im.mimeType};base64,${im.data}" alt="Photo ${i + 1}">
+                        <button type="button" class="thumb-x" data-i="${i}" aria-label="Remove photo">&times;</button>
+                    </div>`).join('');
+                wrap.querySelectorAll('.thumb-x').forEach(b => b.addEventListener('click', () => {
+                    this.pendingShots.splice(+b.dataset.i, 1);
+                    this.renderThumbs();
+                }));
+            }
+            if (hint) {
+                hint.textContent = n
+                    ? `${n} photo${n !== 1 ? 's' : ''} added — tap the circle to capture the last and read them together.`
+                    : 'Fill the frame with the label, then tap the circle. Multi-part label? Tap “Add another photo”.';
+            }
+        }
+
+        addShot() {
+            const image = this.captureFrame();
+            if (!image) {
+                showToast('Camera not ready yet — try again.', 'error');
+                return;
+            }
+            this.pendingShots.push(image);
+            hapticFeedback('light');
+            this.renderThumbs();
         }
 
         // Ends an auto-add run: clears the running total and the duplicate
@@ -1315,6 +1355,9 @@
             const view = document.getElementById('camera-view');
             if (view) view.style.display = 'none';
             document.body.classList.remove('camera-open');
+            // Abandon any half-captured multi-photo set.
+            this.pendingShots = [];
+            this.renderThumbs();
         }
 
         // Grabs the current preview frame, already downscaled for upload.
@@ -1336,23 +1379,30 @@
         async shootLabel() {
             const shutter = document.getElementById('camera-shutter');
             shutter.disabled = true;
-            const image = this.captureFrame();
-            if (!image) {
+            const frame = this.captureFrame();
+            if (!frame) {
                 showToast('Camera not ready yet — try again.', 'error');
                 shutter.disabled = false;
                 return;
             }
+            // Everything stashed via "Add another", plus this final frame.
+            const images = [...this.pendingShots, frame];
+            this.pendingShots = [];
             hapticFeedback('light');
             this.closeCamera();
-            await this.handleLabelImage(image, true);
+            await this.handleLabelImages(images, true);
         }
 
-        async handleLabelCapture(file) {
-            if (!file) return;
+        async handleLabelCapture(files) {
+            const list = Array.from(files || []).filter(Boolean);
+            if (!list.length) return;
             const snapStatus = document.getElementById('snap-status');
             try {
-                const image = await this.fileToBase64(file);
-                await this.handleLabelImage(image);
+                snapStatus.textContent = list.length > 1 ? `Processing ${list.length} photos…` : 'Processing photo…';
+                snapStatus.className = 'lookup-status loading';
+                const images = [];
+                for (const f of list) images.push(await this.fileToBase64(f));
+                await this.handleLabelImages(images);
             } catch (e) {
                 console.error('Label analysis failed:', e);
                 snapStatus.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
@@ -1360,14 +1410,15 @@
             }
         }
 
-        async handleLabelImage(image, fromCamera = false) {
+        async handleLabelImages(images, fromCamera = false) {
             const snapStatus = document.getElementById('snap-status');
-            snapStatus.textContent = 'Analyzing label...';
+            snapStatus.textContent = images.length > 1
+                ? `Reading ${images.length} photos…` : 'Analyzing label…';
             snapStatus.className = 'lookup-status loading';
 
             try {
                 // Call Gemini Vision API
-                const result = await this.analyzeWithGemini(image);
+                const result = await this.analyzeWithGemini(images);
 
                 if (result) {
                     snapStatus.textContent = 'Label read successfully!';
@@ -1497,7 +1548,9 @@
             );
         }
 
-        async analyzeWithGemini(image) {
+        async analyzeWithGemini(images) {
+            // Accept a single image or several photos of the same label.
+            const list = Array.isArray(images) ? images : [images];
 
             // A response schema makes the model return parseable JSON by
             // construction, instead of asking for JSON in the prompt and
@@ -1505,11 +1558,15 @@
             const fields = ['vendor', 'productNumber', 'productName', 'casNumber',
                 'amount', 'unit', 'lotNumber', 'expiration'];
 
+            const intro = list.length > 1
+                ? `These ${list.length} images are different photos of the SAME chemical product label (e.g. a small bottle photographed from several angles). Combine information across all of them into one result; if a field is legible in any photo, use it.`
+                : 'Read this chemical product label image and extract:';
+
             const response = await this.geminiRequest({
                 contents: [{
                     parts: [
                         {
-                            text: `Read this chemical product label image and extract:
+                            text: `${intro}
 - vendor: manufacturer or vendor name (e.g. Sigma-Aldrich, Fisher Scientific, Alfa Aesar)
 - productNumber: catalog or product number
 - productName: chemical or product name
@@ -1519,14 +1576,9 @@
 - lotNumber: lot or batch number if visible
 - expiration: expiration date as YYYY-MM-DD if visible
 
-Use an empty string for any field that is not visible or cannot be determined. Do not guess.`
+Use an empty string for any field that is not visible in any photo or cannot be determined. Do not guess.`
                         },
-                        {
-                            inlineData: {
-                                mimeType: image.mimeType,
-                                data: image.data
-                            }
-                        }
+                        ...list.map(im => ({ inlineData: { mimeType: im.mimeType, data: im.data } }))
                     ]
                 }],
                 generationConfig: {
@@ -1624,13 +1676,13 @@ Use an empty string for any field that is not visible or cannot be determined. D
             // Snap Label
             document.getElementById('snap-label').addEventListener('click', () => this.triggerSnapLabel());
             document.getElementById('label-capture').addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (file) this.handleLabelCapture(file);
-                e.target.value = ''; // Reset so same file can be re-selected
+                if (e.target.files.length) this.handleLabelCapture(e.target.files);
+                e.target.value = ''; // Reset so the same file can be re-selected
             });
 
             // In-app camera
             document.getElementById('camera-shutter').addEventListener('click', () => this.shootLabel());
+            document.getElementById('camera-add').addEventListener('click', () => this.addShot());
             document.getElementById('camera-cancel').addEventListener('click', () => {
                 this.closeCamera();
                 this.endBatch();
