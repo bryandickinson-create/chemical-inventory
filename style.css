@@ -938,6 +938,26 @@ input[readonly] {
 .inv-card.expiring { border-color: var(--warn-border); }
 .inv-card.expired { border-color: var(--danger-border); }
 
+/* Running low: a strong red fill (not just a border like expiry) so it's
+   unmistakable while scrolling the list. */
+.inv-status.low {
+    background: var(--danger);
+    color: white;
+}
+.inv-card.low-stock {
+    background: var(--danger-light);
+    border-color: var(--danger);
+    box-shadow: inset 0.25rem 0 0 var(--danger);
+}
+.inv-group-body .inv-card.low-stock { background: var(--danger-light); }
+.inv-group.low-stock { border-color: var(--danger); }
+
+.btn-warn {
+    background: var(--danger);
+    color: white;
+}
+.btn-warn:hover { background: var(--danger-hover); }
+
 .warn-banner {
     background: var(--warn-light);
     border: 1px solid var(--warn-border);

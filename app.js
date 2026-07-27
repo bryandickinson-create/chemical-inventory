@@ -2139,7 +2139,7 @@ If a field cannot be determined, use empty string "".`
             // A search term is normally required so we don't render hundreds of
             // cards, but picking a location or the Expiring filter is itself a
             // narrowing choice — those browse without one.
-            const browsing = !!filterLocation || filterStatus === 'expiring';
+            const browsing = !!filterLocation || filterStatus === 'expiring' || filterStatus === 'lowstock';
             if (search.length < 2 && !browsing) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = '';
@@ -2154,6 +2154,8 @@ If a field cannot be determined, use empty string "".`
             // Filter by status
             if (filterStatus === 'expiring') {
                 items = items.filter(i => expiryState(i));
+            } else if (filterStatus === 'lowstock') {
+                items = items.filter(i => i.status === 'active' && i.lowStock);
             } else if (filterStatus !== 'all') {
                 items = items.filter(i => i.status === filterStatus);
             }
@@ -2253,6 +2255,8 @@ If a field cannot be determined, use empty string "".`
             const states = members.map(expiryState).filter(Boolean);
             const worst = states.find(s => s.level === 'expired') || states.find(s => s.level === 'expiring');
 
+            const lowN = members.filter(i => i.status === 'active' && i.lowStock).length;
+
             const locations = [...new Set(members.filter(i => i.status === 'active' && i.location).map(i => i.location))];
             const locLabel = locations.length
                 ? locations.slice(0, 3).join(', ') + (locations.length > 3 ? ` +${locations.length - 3}` : '')
@@ -2275,7 +2279,7 @@ If a field cannot be determined, use empty string "".`
             const sub = subParts.map(s => this.esc(s)).join(' &bull; ');
 
             return `
-                <div class="inv-group ${open ? 'open' : ''} ${worst ? worst.level : ''}">
+                <div class="inv-group ${open ? 'open' : ''} ${worst ? worst.level : ''} ${lowN ? 'low-stock' : ''}">
                     <button type="button" class="inv-group-header" data-gi="${idx}">
                         <span class="inv-group-caret">${open ? '&#9662;' : '&#9656;'}</span>
                         <span class="inv-group-title">
@@ -2284,6 +2288,7 @@ If a field cannot be determined, use empty string "".`
                             ${locLabel ? `<span class="inv-group-sub">${this.esc(locLabel)}</span>` : ''}
                         </span>
                         <span class="inv-group-badges">
+                            ${lowN ? `<span class="inv-status low">${lowN} low</span>` : ''}
                             ${worst ? `<span class="inv-status ${worst.level}">${worst.label}</span>` : ''}
                             <span class="badge">${countLabel}</span>
                         </span>
@@ -2305,10 +2310,12 @@ If a field cannot be determined, use empty string "".`
 
         renderCard(item) {
             const expiry = expiryState(item);
+            const low = item.lowStock && item.status === 'active';
             return `
-                <div class="inv-card ${item.status === 'disposed' ? 'disposed' : ''} ${expiry ? expiry.level : ''}">
+                <div class="inv-card ${item.status === 'disposed' ? 'disposed' : ''} ${expiry ? expiry.level : ''} ${low ? 'low-stock' : ''}">
                     <div class="inv-header">
                         <div class="inv-name">${this.esc(item.productName)}</div>
+                        ${low ? `<span class="inv-status low">Low</span>` : ''}
                         ${expiry ? `<span class="inv-status ${expiry.level}">${expiry.label}</span>` : ''}
                         <span class="inv-status ${item.status}">${item.status}</span>
                     </div>
@@ -2321,6 +2328,7 @@ If a field cannot be determined, use empty string "".`
                         ${item.expiration ? `<div><strong>Expires:</strong> ${this.esc(item.expiration)}</div>` : ''}
                         ${item.addedBy ? `<div><strong>Added by:</strong> ${this.esc(item.addedBy)}</div>` : ''}
                         ${item.removedBy ? `<div><strong>Removed by:</strong> ${this.esc(item.removedBy)}</div>` : ''}
+                        ${low && item.lowStockBy ? `<div><strong>Flagged low by:</strong> ${this.esc(item.lowStockBy)}</div>` : ''}
                         ${item.notes ? `<div><strong>Notes:</strong> ${this.esc(item.notes)}</div>` : ''}
                     </div>
                     <div class="inv-dates">
@@ -2335,6 +2343,10 @@ If a field cannot be determined, use empty string "".`
                         }
                         ${item.status === 'active'
                             ? `<button class="btn btn-primary" onclick="app.startMove('${item.id}')">Move</button>`
+                            : ''
+                        }
+                        ${item.status === 'active'
+                            ? `<button class="btn ${item.lowStock ? 'btn-secondary' : 'btn-warn'}" onclick="app.toggleLowStock('${item.id}')">${item.lowStock ? 'Restocked' : 'Running Low'}</button>`
                             : ''
                         }
                         <button class="btn btn-secondary" onclick="app.startEdit('${item.id}')">Edit</button>
@@ -2457,6 +2469,30 @@ If a field cannot be determined, use empty string "".`
             this.refreshInventory();
         }
 
+        // ---- Flag / clear "running low" ----
+        // A shared flag so anyone browsing sees what's in short supply. Like
+        // every other mutation here it's attributed, and toggling clears it
+        // once the chemical has been restocked.
+        async toggleLowStock(id) {
+            const by = this.requireIdentity('flag stock levels');
+            if (!by) return;
+            const item = await this.db.getItem(id);
+            if (!item) return;
+            const now = new Date().toISOString();
+            const nowLow = !item.lowStock;
+            const ok = await this.write(async () => {
+                item.lowStock = nowLow;
+                item.lowStockBy = nowLow ? by : null;
+                item.lowStockAt = nowLow ? now : null;
+                this.addHistory(item, nowLow ? 'flagged-low' : 'restocked', { by, at: now });
+                await this.db.updateItem(item);
+            }, nowLow ? 'Flagging low stock' : 'Clearing low-stock flag');
+            if (!ok) return;
+            feedbackSuccess();
+            showToast(nowLow ? 'Flagged as running low.' : 'Low-stock flag cleared.', 'success');
+            this.refreshInventory();
+        }
+
         async reactivate(id) {
             const by = this.requireIdentity('reactivate a bottle');
             if (!by) return;
@@ -2541,6 +2577,7 @@ If a field cannot be determined, use empty string "".`
                         notes: [],
                         activeBottles: 0,
                         disposedBottles: 0,
+                        lowBottles: 0,
                     };
                 }
                 if (item.location) grouped[key].locations.add(item.location);
@@ -2549,6 +2586,7 @@ If a field cannot be determined, use empty string "".`
                 if (item.notes) grouped[key].notes.push(item.notes);
                 if (item.status === 'active') grouped[key].activeBottles++;
                 else grouped[key].disposedBottles++;
+                if (item.status === 'active' && item.lowStock) grouped[key].lowBottles++;
             });
 
             const summaryData = Object.values(grouped).map(g => ({
@@ -2559,6 +2597,7 @@ If a field cannot be determined, use empty string "".`
                 'Amount Per Bottle': g.amount,
                 'Location': [...g.locations].join(', '),
                 'Active Bottles': g.activeBottles,
+                'Running Low': g.lowBottles,
                 'Disposed Bottles': g.disposedBottles,
                 'Added By': [...g.addedBy].join(', '),
                 'Expiration': [...g.expirations].join(', '),
@@ -2575,6 +2614,7 @@ If a field cannot be determined, use empty string "".`
                 'Unit': item.unit,
                 'Location': item.location || '',
                 'Status': item.status,
+                'Running Low': item.status === 'active' && item.lowStock ? 'YES' : '',
                 'Expiration': item.expiration || '',
                 'Added By': item.addedBy || '',
                 'Date Added': formatDate(item.dateIn),

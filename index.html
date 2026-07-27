@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Inventory">
     <!-- Versioned like app.js: without it a cached stylesheet can outlive a
          deploy, leaving new markup styled by old CSS. Bump with CACHE_VERSION. -->
-    <link rel="stylesheet" href="style.css?v=45">
+    <link rel="stylesheet" href="style.css?v=46">
 </head>
 <body class="mode-input">
     <header>
@@ -268,6 +268,7 @@
                 <input type="text" id="search-inventory" placeholder="Search chemicals...">
                 <select id="filter-status">
                     <option value="active">Active</option>
+                    <option value="lowstock">Running Low</option>
                     <option value="expiring">Expiring</option>
                     <option value="disposed">Disposed</option>
                     <option value="all">All</option>
@@ -308,7 +309,7 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=45"></script>
+    <script src="app.js?v=46"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {
