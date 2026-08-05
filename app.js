@@ -9,9 +9,10 @@
     'use strict';
 
     // Gemini model used for both label vision and web-grounded text lookup.
-    // Change here to try a different model; gemini-2.5-flash is the previous
-    // known-good value if a newer one reads labels worse.
-    const GEMINI_MODEL = 'gemini-3.6-flash';
+    // On flash-lite for its far larger free-tier daily quota (~1000/day vs the
+    // ~20/day that made gemini-3.6-flash unusable for free). gemini-2.5-flash
+    // is a known-good fallback if a newer one reads labels worse.
+    const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
     // ==================== Database ====================
     class ChemDB {
@@ -1405,7 +1406,9 @@
                 await this.handleLabelImages(images);
             } catch (e) {
                 console.error('Label analysis failed:', e);
-                snapStatus.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
+                // Errors we've already phrased for a human are shown as-is;
+                // anything unexpected keeps the generic prefix.
+                snapStatus.textContent = e.friendly ? e.message : 'Analysis failed: ' + (e.message || 'Unknown error');
                 snapStatus.className = 'lookup-status error';
             }
         }
@@ -1417,8 +1420,12 @@
             snapStatus.className = 'lookup-status loading';
 
             try {
-                // Call Gemini Vision API
-                const result = await this.analyzeWithGemini(images);
+                // Call Gemini Vision API. The callback lets a rate-limit retry
+                // show its countdown in the same status line.
+                const result = await this.analyzeWithGemini(images, (msg) => {
+                    snapStatus.textContent = msg;
+                    snapStatus.className = 'lookup-status loading';
+                });
 
                 if (result) {
                     snapStatus.textContent = 'Label read successfully!';
@@ -1482,7 +1489,9 @@
                 }
             } catch (e) {
                 console.error('Label analysis failed:', e);
-                snapStatus.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
+                // Errors we've already phrased for a human are shown as-is;
+                // anything unexpected keeps the generic prefix.
+                snapStatus.textContent = e.friendly ? e.message : 'Analysis failed: ' + (e.message || 'Unknown error');
                 snapStatus.className = 'lookup-status error';
             }
         }
@@ -1548,7 +1557,7 @@
             );
         }
 
-        async analyzeWithGemini(images) {
+        async analyzeWithGemini(images, onProgress) {
             // Accept a single image or several photos of the same label.
             const list = Array.isArray(images) ? images : [images];
 
@@ -1562,7 +1571,7 @@
                 ? `These ${list.length} images are different photos of the SAME chemical product label (e.g. a small bottle photographed from several angles). Combine information across all of them into one result; if a field is legible in any photo, use it.`
                 : 'Read this chemical product label image and extract:';
 
-            const response = await this.geminiRequest({
+            const body = {
                 contents: [{
                     parts: [
                         {
@@ -1589,17 +1598,38 @@ Use an empty string for any field that is not visible in any photo or cannot be 
                         required: fields,
                     },
                 }
-            });
+            };
 
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(err.error?.message || 'API request failed (' + response.status + ')');
+            return this.runGemini(body, onProgress);
+        }
+
+        // Sends a Gemini request, with one automatic retry when the free tier is
+        // briefly rate-limited (HTTP 429). Google reports how long until the
+        // quota window resets; if that's soon we wait it out — showing a live
+        // countdown — rather than making the user re-shoot the label.
+        async runGemini(body, onProgress) {
+            for (let attempt = 0; ; attempt++) {
+                const response = await this.geminiRequest(body);
+                if (response.ok) {
+                    const data = await response.json();
+                    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!text) throw new Error('No response from AI');
+                    return this.parseGeminiJson(text);
+                }
+                const errJson = await response.json().catch(() => ({}));
+                const wait = this.parseRetryDelay(errJson);
+                if (response.status === 429 && attempt === 0 && wait !== null && wait <= 60) {
+                    for (let s = Math.ceil(wait); s > 0; s--) {
+                        if (onProgress) onProgress(`Gemini free-tier limit reached — retrying in ${s}s…`);
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                    continue;
+                }
+                throw this.geminiError(response.status, errJson);
             }
+        }
 
-            const data = await response.json();
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!text) throw new Error('No response from AI');
-
+        parseGeminiJson(text) {
             try {
                 return JSON.parse(text);
             } catch (e) {
@@ -1611,6 +1641,46 @@ Use an empty string for any field that is not visible in any photo or cannot be 
                 console.error('JSON parse failed:', text);
                 throw new Error('Could not parse AI response');
             }
+        }
+
+        // Pulls Google's RetryInfo.retryDelay ("49s") out of a 429 error body.
+        parseRetryDelay(errJson) {
+            const details = (errJson && errJson.error && errJson.error.details) || [];
+            for (const d of details) {
+                if (d && typeof d.retryDelay === 'string') {
+                    const m = /([\d.]+)s/.exec(d.retryDelay);
+                    if (m) return parseFloat(m[1]);
+                }
+            }
+            return null;
+        }
+
+        // Turns a raw Gemini API error into one short, human sentence. Marked
+        // .friendly so callers show it as-is instead of prefixing "Analysis
+        // failed:" onto an already-explained problem.
+        geminiError(status, errJson) {
+            const raw = (errJson && errJson.error && errJson.error.message) || '';
+            let msg;
+            if (status === 429) {
+                const wait = this.parseRetryDelay(errJson);
+                if (wait !== null && wait > 120) {
+                    // A multi-minute reset means the daily free-tier allowance is
+                    // spent, not a brief burst limit — retrying won't help.
+                    const mins = Math.round(wait / 60);
+                    const when = mins >= 90 ? `about ${Math.round(mins / 60)} hour(s)` : `about ${mins} min`;
+                    msg = `Gemini's daily free-AI limit for this API key is used up (resets in ${when}). Enter the chemical manually below, or enable billing on the key for higher limits.`;
+                } else {
+                    const when = wait ? ` Try again in about ${Math.ceil(wait)}s` : ' Try again in a minute';
+                    msg = `Gemini's free AI tier is rate-limited right now.${when}, or just enter the chemical manually below.`;
+                }
+            } else if (status === 400 && /api[_ ]?key/i.test(raw)) {
+                msg = 'Gemini rejected the API key — re-check it in Settings (the gear icon).';
+            } else {
+                msg = raw || ('AI request failed (' + status + ')');
+            }
+            const err = new Error(msg);
+            err.friendly = true;
+            return err;
         }
 
         bindEvents() {
