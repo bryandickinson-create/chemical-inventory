@@ -8,11 +8,20 @@
 (function () {
     'use strict';
 
-    // Gemini model used for both label vision and web-grounded text lookup.
-    // On flash-lite for its far larger free-tier daily quota (~1000/day vs the
-    // ~20/day that made gemini-3.6-flash unusable for free). gemini-2.5-flash
-    // is a known-good fallback if a newer one reads labels worse.
-    const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+    // Candidate models for label vision and web-grounded text lookup, tried in
+    // order until one the account can actually use responds. Google retires
+    // models for new accounts (2.5-flash-lite is already gone for them) and the
+    // "-lite" tiers carry the largest free-tier daily quotas, so lead with the
+    // current lite models and fall back to the flagship flash, which every
+    // account can use. The first model that works is remembered per device so
+    // later calls skip the dead ones. Order matters: quota-friendly first.
+    const GEMINI_MODELS = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3.6-flash',
+        'gemini-2.5-flash',
+    ];
+    const GEMINI_MODEL_STORE = 'geminiModel';
 
     // ==================== Database ====================
     class ChemDB {
@@ -1541,11 +1550,12 @@
         // Single place the Gemini endpoint and credentials are assembled.
         // The key goes in a header rather than the URL: query strings end up in
         // browser history, proxy logs, and crash reports; headers don't.
-        geminiRequest(body) {
+        geminiRequest(body, model) {
             const apiKey = this.getGeminiKey();
             if (!apiKey) throw new Error('No API key configured');
+            const useModel = model || this.getPreferredModels()[0];
             return fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent`,
                 {
                     method: 'POST',
                     headers: {
@@ -1555,6 +1565,22 @@
                     body: JSON.stringify(body),
                 }
             );
+        }
+
+        // Candidate models to try, with the last one that worked on this device
+        // pulled to the front so we don't re-probe dead models every scan.
+        getPreferredModels() {
+            let saved = null;
+            try { saved = localStorage.getItem(GEMINI_MODEL_STORE); } catch (e) { /* private mode */ }
+            const list = GEMINI_MODELS.slice();
+            if (saved && list.includes(saved)) {
+                return [saved, ...list.filter(m => m !== saved)];
+            }
+            return list;
+        }
+
+        rememberModel(model) {
+            try { localStorage.setItem(GEMINI_MODEL_STORE, model); } catch (e) { /* private mode */ }
         }
 
         async analyzeWithGemini(images, onProgress) {
@@ -1603,13 +1629,34 @@ Use an empty string for any field that is not visible in any photo or cannot be 
             return this.runGemini(body, onProgress);
         }
 
-        // Sends a Gemini request, with one automatic retry when the free tier is
+        // Tries each candidate model until one the account can use responds,
+        // then remembers it. Only an "unavailable to this account" error moves
+        // on to the next model — quota, parse and network errors aren't fixed by
+        // switching models, so they surface straight away.
+        async runGemini(body, onProgress) {
+            const models = this.getPreferredModels();
+            let lastErr = null;
+            for (let i = 0; i < models.length; i++) {
+                try {
+                    const result = await this.callGeminiModel(body, models[i], onProgress);
+                    this.rememberModel(models[i]);
+                    return result;
+                } catch (e) {
+                    lastErr = e;
+                    if (e.modelUnavailable && i < models.length - 1) continue;
+                    throw e;
+                }
+            }
+            throw lastErr || new Error('AI request failed');
+        }
+
+        // One model attempt, with a single automatic retry when the free tier is
         // briefly rate-limited (HTTP 429). Google reports how long until the
         // quota window resets; if that's soon we wait it out — showing a live
         // countdown — rather than making the user re-shoot the label.
-        async runGemini(body, onProgress) {
+        async callGeminiModel(body, model, onProgress) {
             for (let attempt = 0; ; attempt++) {
-                const response = await this.geminiRequest(body);
+                const response = await this.geminiRequest(body, model);
                 if (response.ok) {
                     const data = await response.json();
                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -1660,8 +1707,15 @@ Use an empty string for any field that is not visible in any photo or cannot be 
         // failed:" onto an already-explained problem.
         geminiError(status, errJson) {
             const raw = (errJson && errJson.error && errJson.error.message) || '';
+            // A model the account can't use — 404, or a 400 whose text says the
+            // model is gone/unknown. This flag tells runGemini to try the next
+            // candidate rather than give up.
+            const unavailable = status === 404
+                || /no longer available|not available|is not found|not found for api version|does not exist|unsupported|cannot be used/i.test(raw);
             let msg;
-            if (status === 429) {
+            if (unavailable) {
+                msg = 'This AI model isn\'t available on your Google account. The app is trying another — if this keeps up, enter the chemical manually below.';
+            } else if (status === 429) {
                 const wait = this.parseRetryDelay(errJson);
                 if (wait !== null && wait > 120) {
                     // A multi-minute reset means the daily free-tier allowance is
@@ -1680,6 +1734,7 @@ Use an empty string for any field that is not visible in any photo or cannot be 
             }
             const err = new Error(msg);
             err.friendly = true;
+            err.modelUnavailable = unavailable;
             return err;
         }
 
