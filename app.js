@@ -73,6 +73,20 @@
             return this._req(this._tx('lists', 'readwrite').put({ key, items }));
         }
 
+        // Per-entry edits. Locally there's no concurrency, so these are just a
+        // read-modify-write of the mirrored array — the merge-safety that
+        // matters lives in the Firebase layer.
+        async addListEntry(key, value) {
+            const items = await this.getList(key);
+            if (!items.includes(value)) items.push(value);
+            return this.saveList(key, items);
+        }
+
+        async removeListEntry(key, value) {
+            const items = (await this.getList(key)).filter(v => v !== value);
+            return this.saveList(key, items);
+        }
+
         _tx(storeName, mode) {
             const tx = this.db.transaction(storeName, mode);
             return tx.objectStore(storeName);
@@ -200,13 +214,60 @@
         }
 
         // -- Managed lists (names, locations) --
-        async getList(key) {
-            const data = await this._get('lists/' + key + '/items');
-            return data || [];
+        // Entries are stored one-per-node under lists/<key>/entries/<slug> so
+        // two devices editing the same list touch different children and merge
+        // instead of clobbering. The legacy whole-array at lists/<key>/items is
+        // still read (and honoured on removal) so nothing already stored is lost.
+        _slug(value) {
+            // Hex of the UTF-8 bytes: collision-free and free of the characters
+            // Firebase forbids in keys (. $ # [ ] /).
+            const bytes = new TextEncoder().encode(value == null ? '' : String(value));
+            let s = '';
+            for (const b of bytes) s += b.toString(16).padStart(2, '0');
+            return s || '_';
         }
 
+        _normalizeList(data) {
+            const out = [];
+            const seen = new Set();
+            const add = (v) => {
+                if (typeof v === 'string' && v !== '' && !seen.has(v)) { seen.add(v); out.push(v); }
+            };
+            if (data && data.items) {
+                (Array.isArray(data.items) ? data.items : Object.values(data.items)).forEach(add);
+            }
+            if (data && data.entries) {
+                Object.values(data.entries).forEach(add);
+            }
+            return out;
+        }
+
+        async getList(key) {
+            const data = await this._get('lists/' + key);
+            return this._normalizeList(data);
+        }
+
+        async addListEntry(key, value) {
+            return this._set('lists/' + key + '/entries/' + this._slug(value), value);
+        }
+
+        // Legacy: only reached when a whole-list op queued before this version
+        // finally drains. Writes just the items subnode so it can't wipe the
+        // per-entry map that replaced it.
         async saveList(key, items) {
-            return this._set('lists/' + key, { items });
+            return this._set('lists/' + key + '/items', items);
+        }
+
+        async removeListEntry(key, value) {
+            // Drop the per-entry node, and also filter any legacy array so the
+            // value can't reappear through the backward-compatible merge.
+            await this._delete('lists/' + key + '/entries/' + this._slug(value)).catch(() => {});
+            const data = await this._get('lists/' + key);
+            if (data && data.items) {
+                const items = (Array.isArray(data.items) ? data.items : Object.values(data.items))
+                    .filter(v => v !== value);
+                await this._set('lists/' + key + '/items', items);
+            }
         }
 
         // -- Chemical templates --
@@ -331,9 +392,17 @@
         }
 
         _enqueue(op) {
-            // Every op is a whole-record put, so a newer op for the same key
-            // fully supersedes the older one.
-            this.pending = this.pending.filter(p => !(p.kind === op.kind && p.key === op.key));
+            // A newer op supersedes the older one for the same target. For most
+            // kinds that's the record key; for per-entry list ops the target is
+            // (list key + value), so adding two different names both survive.
+            const sameTarget = (p) => {
+                if (p.kind !== op.kind) return false;
+                if (op.kind === 'listAdd' || op.kind === 'listRemove') {
+                    return p.key === op.key && p.value === op.value;
+                }
+                return p.key === op.key;
+            };
+            this.pending = this.pending.filter(p => !sameTarget(p));
             this.pending.push(op);
             this._saveQueue();
             this._setOnline(false);
@@ -377,7 +446,9 @@
                 return op.value ? this.remote.addItem(op.value) : this.remote.deleteItem(op.key);
             }
             if (op.kind === 'chemical') return this.remote.saveChemical(op.value);
-            if (op.kind === 'list') return this.remote.saveList(op.key, op.value);
+            if (op.kind === 'list') return this.remote.saveList(op.key, op.value); // legacy queued ops
+            if (op.kind === 'listAdd') return this.remote.addListEntry(op.key, op.value);
+            if (op.kind === 'listRemove') return this.remote.removeListEntry(op.key, op.value);
             if (op.kind === 'audit') return this.remote.addAudit(op.value);
             return Promise.resolve();
         }
@@ -448,17 +519,40 @@
         }
 
         async getList(key) {
-            const queued = this.pending.find(p => p.kind === 'list' && p.key === key);
-            if (queued) return queued.value.slice();
+            let base;
             try {
-                const items = await this.remote.getList(key);
+                base = await this.remote.getList(key);
                 this._setOnline(true);
-                this.local.saveList(key, items).catch(() => { /* mirror is best-effort */ });
-                return items;
+                this.local.saveList(key, base).catch(() => { /* mirror is best-effort */ });
             } catch (e) {
                 this._setOnline(false);
-                return this.local.getList(key);
+                base = await this.local.getList(key);
             }
+            // Overlay only this device's unsynced entry edits. Crucially the
+            // real DB is the base, so a stuck queue can never hide entries that
+            // exist remotely — it can only surface an add you haven't synced yet.
+            return this._applyPendingList(key, base);
+        }
+
+        // Applies queued per-entry list ops onto a freshly-read list, in order.
+        _applyPendingList(key, base) {
+            const out = [];
+            const seen = new Set();
+            const add = (v) => { if (!seen.has(v)) { seen.add(v); out.push(v); } };
+            (base || []).forEach(add);
+            for (const p of this.pending) {
+                if (p.key !== key) continue;
+                if (p.kind === 'listAdd') add(p.value);
+                else if (p.kind === 'listRemove') {
+                    const i = out.indexOf(p.value);
+                    if (i >= 0) { out.splice(i, 1); seen.delete(p.value); }
+                } else if (p.kind === 'list' && Array.isArray(p.value)) {
+                    // A legacy whole-list op still draining: union it in so its
+                    // additions show, but never let it hide the live list.
+                    p.value.forEach(add);
+                }
+            }
+            return out;
         }
 
         async getChemical(barcode) {
@@ -512,11 +606,19 @@
             );
         }
 
-        saveList(key, items) {
+        addListEntry(key, value) {
             return this._write(
-                () => this.local.saveList(key, items),
-                () => this.remote.saveList(key, items),
-                { kind: 'list', key, value: items }
+                () => this.local.addListEntry(key, value),
+                () => this.remote.addListEntry(key, value),
+                { kind: 'listAdd', key, value }
+            );
+        }
+
+        removeListEntry(key, value) {
+            return this._write(
+                () => this.local.removeListEntry(key, value),
+                () => this.remote.removeListEntry(key, value),
+                { kind: 'listRemove', key, value }
             );
         }
 
@@ -891,11 +993,12 @@
             const reselectName = target === 'names' && nameSel.value === oldValue;
             const reselectLoc = target === 'locations' && locSel.value === oldValue;
 
-            const next = list.filter(i => i !== oldValue);
-            if (!next.includes(newValue)) next.push(newValue);
-
             const ok = await this.write(async () => {
-                await this.db.saveList(target, next);
+                // Add the new label, drop the old one, then relabel the data.
+                // Two independent entry edits rather than a whole-list rewrite,
+                // so a concurrent edit elsewhere isn't clobbered.
+                await this.db.addListEntry(target, newValue);
+                await this.db.removeListEntry(target, oldValue);
                 await this.applyRename(target, oldValue, newValue);
             }, 'Renaming');
             if (!ok) return;
@@ -952,8 +1055,7 @@
                 showToast('Already exists.', 'error');
                 return;
             }
-            items.push(value);
-            const ok = await this.write(() => this.db.saveList(this.modalTarget, items), 'Adding entry');
+            const ok = await this.write(() => this.db.addListEntry(this.modalTarget, value), 'Adding entry');
             if (!ok) return;
             input.value = '';
             await this.refreshModalList();
@@ -979,9 +1081,7 @@
                 if (!proceed) return;
             }
 
-            let items = await this.db.getList(this.modalTarget);
-            items = items.filter(i => i !== value);
-            const ok = await this.write(() => this.db.saveList(this.modalTarget, items), 'Removing entry');
+            const ok = await this.write(() => this.db.removeListEntry(this.modalTarget, value), 'Removing entry');
             if (!ok) return;
             await this.refreshModalList();
             await this.loadSessionDropdowns();
