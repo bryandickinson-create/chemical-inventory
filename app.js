@@ -844,10 +844,36 @@
 
         // ---- Session (Name + Location) ----
         async loadSessionDropdowns() {
-            const names = await this.db.getList('names');
-            const locations = await this.db.getList('locations');
-            this.populateSelect('session-name', names);
-            this.populateSelect('session-location', locations);
+            const [names, locations, used] = await Promise.all([
+                this.db.getList('names'),
+                this.db.getList('locations'),
+                this.collectUsedValues(),
+            ]);
+            // Union the managed list with values that actually appear on the
+            // inventory. The managed lists can drift or (before the per-entry
+            // fix) be clobbered, but a name/location that's in use must never
+            // vanish from the dropdowns — so it's recovered straight from the
+            // items, the same place Export reads it from.
+            this.populateSelect('session-name', [...new Set([...names, ...used.names])]);
+            this.populateSelect('session-location', [...new Set([...locations, ...used.locations])]);
+        }
+
+        // Every name/location referenced anywhere on the inventory records.
+        async collectUsedValues() {
+            const items = await this.db.getAllItems();
+            const names = new Set();
+            const locations = new Set();
+            items.forEach(i => {
+                if (i.location) locations.add(i.location);
+                if (i.addedBy) names.add(i.addedBy);
+                if (i.removedBy) names.add(i.removedBy);
+                (i.history || []).forEach(h => {
+                    if (h.by) names.add(h.by);
+                    if (h.from) locations.add(h.from);
+                    if (h.to) locations.add(h.to);
+                });
+            });
+            return { names: [...names], locations: [...locations] };
         }
 
         populateSelect(selectId, items) {
@@ -927,7 +953,12 @@
         }
 
         async refreshModalList() {
-            const items = await this.db.getList(this.modalTarget);
+            // Same union as the dropdowns: show managed entries plus any value
+            // that's live on the inventory, so the manager matches what people
+            // actually see and can rename/merge a recovered entry.
+            const stored = await this.db.getList(this.modalTarget);
+            const used = (await this.collectUsedValues())[this.modalTarget] || [];
+            const items = [...new Set([...stored, ...used])];
             const ul = document.getElementById('modal-list');
             const emptyMsg = document.getElementById('modal-empty');
 
@@ -1064,21 +1095,20 @@
         }
 
         async removeListItem(value) {
-            // Removing a value in use doesn't touch the entries that reference
-            // it, but it does take it out of the dropdowns — say so plainly,
-            // because silently stranding a shelf full of bottles looks like
-            // data loss even though nothing was lost.
+            const noun = this.modalTarget === 'locations' ? 'location' : 'name';
+            // A value that's still on inventory records can't be hidden: the
+            // dropdowns are rebuilt from the data, so it would just reappear.
+            // Say so and point at Rename, which relabels those entries too.
             const counts = await this.countListUsage(this.modalTarget);
             const inUse = counts.get(value) || 0;
             if (inUse > 0) {
-                const noun = this.modalTarget === 'locations' ? 'location' : 'name';
-                const proceed = confirm(
-                    `"${value}" is used by ${inUse} inventory ${inUse === 1 ? 'entry' : 'entries'}.\n\n` +
-                    `Removing it will NOT delete or change those entries — they keep the ${noun} "${value}". ` +
-                    `It only disappears from the dropdown, so you won't be able to pick it for new entries.\n\n` +
-                    `Remove it anyway?`
+                alert(
+                    `"${value}" is still on ${inUse} inventory ${inUse === 1 ? 'entry' : 'entries'}, ` +
+                    `so it can't be removed from the dropdown — it would just come back from the data.\n\n` +
+                    `To retire this ${noun}, use Rename (✎) to relabel those ${inUse === 1 ? 'entry' : 'entries'}, ` +
+                    `or move/relabel the bottles first.`
                 );
-                if (!proceed) return;
+                return;
             }
 
             const ok = await this.write(() => this.db.removeListEntry(this.modalTarget, value), 'Removing entry');
