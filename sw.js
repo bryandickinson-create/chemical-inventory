@@ -8,7 +8,7 @@
 // ============================================================
 
 const CACHE_PREFIX = 'chem-inv-app';
-const CACHE_VERSION = CACHE_PREFIX + '-v26';
+const CACHE_VERSION = CACHE_PREFIX + '-v27';
 
 // Cache names used by earlier builds, cleaned up on activate.
 const LEGACY_CACHES = ['chem-inv-v1', 'chem-inv-beta-v1'];

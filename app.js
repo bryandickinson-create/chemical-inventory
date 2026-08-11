@@ -1081,9 +1081,21 @@
             const value = input.value.trim();
             if (!value) return;
 
-            const items = await this.db.getList(this.modalTarget);
-            if (items.includes(value)) {
-                showToast('Already exists.', 'error');
+            // Catch a case/spacing twin of anything already selectable — the
+            // managed list AND values already on the inventory — so we don't end
+            // up with "Bryan" and "bryan " as two different people.
+            const norm = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+            const stored = await this.db.getList(this.modalTarget);
+            const used = (await this.collectUsedValues())[this.modalTarget] || [];
+            const existing = [...new Set([...stored, ...used])];
+            const clash = existing.find(e => norm(e) === norm(value));
+            if (clash) {
+                showToast(
+                    clash === value
+                        ? 'Already exists.'
+                        : `Already exists as "${clash}". Pick that one, or use Rename to change its spelling.`,
+                    'error'
+                );
                 return;
             }
             const ok = await this.write(() => this.db.addListEntry(this.modalTarget, value), 'Adding entry');
