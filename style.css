@@ -238,11 +238,14 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
     max-width: 600px;
     margin: 0 auto;
     display: flex;
+    flex-wrap: wrap;
     gap: 0.75rem;
 }
 
 .session-field {
-    flex: 1;
+    /* Wrap to a second row on narrow screens rather than cramming three
+       fields across a phone. */
+    flex: 1 1 140px;
     min-width: 0;
 }
 
@@ -261,11 +264,20 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
     gap: 0.35rem;
 }
 
-.session-select-row select {
+.session-select-row select,
+.session-select-row input {
     flex: 1;
     min-width: 0;
     padding: 0.4rem 0.5rem;
     font-size: 0.88rem;
+}
+
+.optional-hint {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--gray-400);
+    font-size: 0.9em;
 }
 
 .btn-sm {

@@ -844,9 +844,10 @@
 
         // ---- Session (Name + Location) ----
         async loadSessionDropdowns() {
-            const [names, locations, used] = await Promise.all([
+            const [names, locations, labels, used] = await Promise.all([
                 this.db.getList('names'),
                 this.db.getList('locations'),
+                this.db.getList('labels'),
                 this.collectUsedValues(),
             ]);
             // Union the managed list with values that actually appear on the
@@ -856,15 +857,19 @@
             // items, the same place Export reads it from.
             this.populateSelect('session-name', [...new Set([...names, ...used.names])]);
             this.populateSelect('session-location', [...new Set([...locations, ...used.locations])]);
+            // Label is a type-ahead box, so its known values feed a datalist.
+            this.populateDatalist('label-suggestions', [...new Set([...labels, ...used.labels])]);
         }
 
-        // Every name/location referenced anywhere on the inventory records.
+        // Every name/location/label referenced anywhere on the inventory records.
         async collectUsedValues() {
             const items = await this.db.getAllItems();
             const names = new Set();
             const locations = new Set();
+            const labels = new Set();
             items.forEach(i => {
                 if (i.location) locations.add(i.location);
+                if (i.label) labels.add(i.label);
                 if (i.addedBy) names.add(i.addedBy);
                 if (i.removedBy) names.add(i.removedBy);
                 (i.history || []).forEach(h => {
@@ -873,7 +878,35 @@
                     if (h.to) locations.add(h.to);
                 });
             });
-            return { names: [...names], locations: [...locations] };
+            return { names: [...names], locations: [...locations], labels: [...labels] };
+        }
+
+        // Normalises a typed label: snaps to an existing spelling if one differs
+        // only by case/spacing (so "f1-a1" joins "F1-A1" instead of forking it),
+        // otherwise registers the new label so it shows up in the type-ahead.
+        async canonicalLabel(value) {
+            const label = (value || '').trim();
+            if (!label) return '';
+            const norm = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+            const known = [...new Set([
+                ...(await this.db.getList('labels')),
+                ...(await this.collectUsedValues()).labels,
+            ])];
+            const match = known.find(k => norm(k) === norm(label));
+            if (match) return match;
+            try { await this.db.addListEntry('labels', label); } catch (e) { /* best-effort */ }
+            return label;
+        }
+
+        populateDatalist(id, items) {
+            const dl = document.getElementById(id);
+            if (!dl) return;
+            dl.innerHTML = '';
+            [...items].sort((a, b) => a.localeCompare(b)).forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v;
+                dl.appendChild(opt);
+            });
         }
 
         populateSelect(selectId, items) {
@@ -900,10 +933,15 @@
             return document.getElementById('session-location').value;
         }
 
+        getSessionLabel() {
+            return document.getElementById('session-label').value.trim();
+        }
+
         saveSession() {
             try {
                 localStorage.setItem('chem_session_name', this.getSessionName());
                 localStorage.setItem('chem_session_location', this.getSessionLocation());
+                localStorage.setItem('chem_session_label', this.getSessionLabel());
             } catch (e) { /* ignore */ }
         }
 
@@ -911,18 +949,20 @@
             try {
                 const name = localStorage.getItem('chem_session_name');
                 const loc = localStorage.getItem('chem_session_location');
+                const label = localStorage.getItem('chem_session_label');
                 if (name) document.getElementById('session-name').value = name;
                 if (loc) document.getElementById('session-location').value = loc;
+                if (label) document.getElementById('session-label').value = label;
             } catch (e) { /* ignore */ }
         }
 
         // ---- List Edit Modal ----
         openModal(target) {
             this.modalTarget = target;
-            document.getElementById('modal-title').textContent =
-                target === 'names' ? 'Edit Names' : 'Edit Locations';
-            document.getElementById('modal-new-item').placeholder =
-                target === 'names' ? 'Add new name...' : 'Add new location...';
+            const noun = { names: 'Names', locations: 'Locations', labels: 'Labels' }[target] || 'List';
+            document.getElementById('modal-title').textContent = 'Edit ' + noun;
+            const addNoun = { names: 'name', locations: 'location', labels: 'label' }[target] || 'entry';
+            document.getElementById('modal-new-item').placeholder = 'Add new ' + addNoun + '...';
             document.getElementById('modal-new-item').value = '';
             document.getElementById('list-modal').style.display = '';
             this.refreshModalList();
@@ -942,6 +982,8 @@
             items.forEach(i => {
                 if (target === 'locations') {
                     bump(i.location);
+                } else if (target === 'labels') {
+                    bump(i.label);
                 } else {
                     // A person can be attached as adder, remover, or via history.
                     const people = new Set([i.addedBy, i.removedBy].filter(Boolean));
@@ -1065,6 +1107,8 @@
                         if (h.from === oldValue) { h.from = newValue; changed = true; }
                         if (h.to === oldValue) { h.to = newValue; changed = true; }
                     });
+                } else if (target === 'labels') {
+                    if (item.label === oldValue) { item.label = newValue; changed = true; }
                 } else {
                     if (item.addedBy === oldValue) { item.addedBy = newValue; changed = true; }
                     if (item.removedBy === oldValue) { item.removedBy = newValue; changed = true; }
@@ -1585,6 +1629,7 @@
                     // Show and fill the form
                     const form = document.getElementById('chemical-form');
                     document.getElementById('chem-form').reset();
+                    document.getElementById('f-label').value = this.getSessionLabel();
                     document.getElementById('autofill-notice').style.display = 'none';
                     this.setLookupStatus('');
                     document.getElementById('vendor-link').style.display = 'none';
@@ -1892,10 +1937,13 @@ Use an empty string for any field that is not visible in any photo or cannot be 
             // Session dropdowns - save on change
             document.getElementById('session-name').addEventListener('change', () => this.saveSession());
             document.getElementById('session-location').addEventListener('change', () => this.saveSession());
+            // Label is a free-text box, so persist as it's typed.
+            document.getElementById('session-label').addEventListener('input', () => this.saveSession());
 
-            // Edit buttons for name/location lists
+            // Edit buttons for name/location/label lists
             document.getElementById('edit-names').addEventListener('click', () => this.openModal('names'));
             document.getElementById('edit-locations').addEventListener('click', () => this.openModal('locations'));
+            document.getElementById('edit-labels').addEventListener('click', () => this.openModal('labels'));
 
             // Modal events
             document.getElementById('modal-close').addEventListener('click', () => this.closeModal());
@@ -1999,6 +2047,7 @@ Use an empty string for any field that is not visible in any photo or cannot be 
             document.getElementById('search-inventory').addEventListener('input', () => this.refreshInventory());
             document.getElementById('filter-status').addEventListener('change', () => this.refreshInventory());
             document.getElementById('filter-location').addEventListener('change', () => this.refreshInventory());
+            document.getElementById('filter-label').addEventListener('change', () => this.refreshInventory());
             const groupToggle = document.getElementById('group-items');
             groupToggle.checked = localStorage.getItem('chem_group_items') !== 'off';
             groupToggle.addEventListener('change', () => {
@@ -2140,6 +2189,7 @@ Use an empty string for any field that is not visible in any photo or cannot be 
                 const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
                 document.getElementById('f-unit').value = unitMap[(result.unit || '').toLowerCase()] || result.unit;
             }
+            document.getElementById('f-label').value = this.getSessionLabel();
 
             form.style.display = '';
             form.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2208,6 +2258,8 @@ If a field cannot be determined, use empty string "".`
                 document.getElementById('f-barcode').value = barcode;
                 notice.style.display = 'none';
             }
+            // Carry the current bin/label into the new entry; still editable.
+            document.getElementById('f-label').value = this.getSessionLabel();
 
             form.style.display = '';
             form.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2225,6 +2277,8 @@ If a field cannot be determined, use empty string "".`
             const notes = document.getElementById('f-notes').value.trim();
             const location = this.getSessionLocation();
             const addedBy = this.getSessionName();
+            // Per-item label, falling back to the session label (the current bin).
+            const labelRaw = document.getElementById('f-label').value.trim() || this.getSessionLabel();
 
             if (!vendor || !productNumber || !productName || !amount) {
                 showToast('Fill in all required fields.', 'error');
@@ -2232,8 +2286,10 @@ If a field cannot be determined, use empty string "".`
                 return false;
             }
 
+            const label = await this.canonicalLabel(labelRaw);
+
             if (this.editingId) {
-                await this.saveEdit({ barcode, vendor, productNumber, productName, casNumber, amount, unit, expiration, notes });
+                await this.saveEdit({ barcode, vendor, productNumber, productName, casNumber, amount, unit, expiration, notes, label });
                 return true;
             }
 
@@ -2281,6 +2337,7 @@ If a field cannot be determined, use empty string "".`
                 amount,
                 unit,
                 location,
+                label,
                 expiration,
                 notes,
                 addedBy,
@@ -2322,6 +2379,7 @@ If a field cannot be determined, use empty string "".`
             document.getElementById('f-unit').value = item.unit || 'mL';
             document.getElementById('f-expiration').value = item.expiration || '';
             document.getElementById('f-notes').value = item.notes || '';
+            document.getElementById('f-label').value = item.label || '';
 
             const locations = await this.db.getList('locations');
             this.populateSelect('f-location', locations.slice());
@@ -2380,12 +2438,15 @@ If a field cannot be determined, use empty string "".`
             // managed list. Renaming or removing a location from the list would
             // otherwise strand every bottle still filed under the old name —
             // they'd count towards the badge but be impossible to browse to.
-            const [managed, items] = await Promise.all([
+            const [managedLoc, managedLabels, items] = await Promise.all([
                 this.db.getList('locations'),
+                this.db.getList('labels'),
                 this.db.getAllItems(),
             ]);
-            const used = items.map(i => i.location).filter(Boolean);
-            this.populateSelect('filter-location', [...new Set([...managed, ...used])]);
+            const usedLoc = items.map(i => i.location).filter(Boolean);
+            const usedLabels = items.map(i => i.label).filter(Boolean);
+            this.populateSelect('filter-location', [...new Set([...managedLoc, ...usedLoc])]);
+            this.populateSelect('filter-label', [...new Set([...managedLabels, ...usedLabels])]);
         }
 
         async refreshInventory() {
@@ -2393,6 +2454,7 @@ If a field cannot be determined, use empty string "".`
             const search = document.getElementById('search-inventory').value.toLowerCase().trim();
             const filterStatus = document.getElementById('filter-status').value;
             const filterLocation = document.getElementById('filter-location').value;
+            const filterLabel = document.getElementById('filter-label').value;
 
             // Update count badge
             const activeCount = allItems.filter(i => i.status === 'active').length;
@@ -2406,7 +2468,7 @@ If a field cannot be determined, use empty string "".`
             // A search term is normally required so we don't render hundreds of
             // cards, but picking a location or the Expiring filter is itself a
             // narrowing choice — those browse without one.
-            const browsing = !!filterLocation || filterStatus === 'expiring' || filterStatus === 'lowstock';
+            const browsing = !!filterLocation || !!filterLabel || filterStatus === 'expiring' || filterStatus === 'lowstock';
             if (search.length < 2 && !browsing) {
                 listEl.innerHTML = '';
                 emptyEl.style.display = '';
@@ -2431,10 +2493,14 @@ If a field cannot be determined, use empty string "".`
                 items = items.filter(i => (i.location || '') === filterLocation);
             }
 
+            if (filterLabel) {
+                items = items.filter(i => (i.label || '') === filterLabel);
+            }
+
             // Search
             if (search) {
                 items = items.filter(i => this.matchesQuery(i, search,
-                    ['productName', 'vendor', 'productNumber', 'casNumber', 'location', 'addedBy', 'notes']
+                    ['productName', 'vendor', 'productNumber', 'casNumber', 'location', 'label', 'addedBy', 'notes']
                 ));
             }
 
@@ -2592,6 +2658,7 @@ If a field cannot be determined, use empty string "".`
                         <div><strong>CAS:</strong> ${this.esc(item.casNumber || '—')}</div>
                         <div><strong>Amount:</strong> ${this.esc(item.amount)} ${this.esc(item.unit)}</div>
                         ${item.location ? `<div><strong>Location:</strong> ${this.esc(item.location)}</div>` : ''}
+                        ${item.label ? `<div><strong>Label:</strong> ${this.esc(item.label)}</div>` : ''}
                         ${item.expiration ? `<div><strong>Expires:</strong> ${this.esc(item.expiration)}</div>` : ''}
                         ${item.addedBy ? `<div><strong>Added by:</strong> ${this.esc(item.addedBy)}</div>` : ''}
                         ${item.removedBy ? `<div><strong>Removed by:</strong> ${this.esc(item.removedBy)}</div>` : ''}
@@ -2798,6 +2865,7 @@ If a field cannot be determined, use empty string "".`
                     vendor: item.vendor || '',
                     amount: (item.amount || '') + ' ' + (item.unit || ''),
                     location: item.location || '',
+                    label: item.label || '',
                     notes: item.notes || '',
                 });
                 await this.db.deleteItem(id);
@@ -2839,6 +2907,7 @@ If a field cannot be determined, use empty string "".`
                         casNumber: item.casNumber,
                         amount: item.amount + ' ' + item.unit,
                         locations: new Set(),
+                        labels: new Set(),
                         addedBy: new Set(),
                         expirations: new Set(),
                         notes: [],
@@ -2848,6 +2917,7 @@ If a field cannot be determined, use empty string "".`
                     };
                 }
                 if (item.location) grouped[key].locations.add(item.location);
+                if (item.label) grouped[key].labels.add(item.label);
                 if (item.addedBy) grouped[key].addedBy.add(item.addedBy);
                 if (item.expiration) grouped[key].expirations.add(item.expiration);
                 if (item.notes) grouped[key].notes.push(item.notes);
@@ -2863,6 +2933,7 @@ If a field cannot be determined, use empty string "".`
                 'CAS Number': g.casNumber,
                 'Amount Per Bottle': g.amount,
                 'Location': [...g.locations].join(', '),
+                'Label': [...g.labels].join(', '),
                 'Active Bottles': g.activeBottles,
                 'Running Low': g.lowBottles,
                 'Disposed Bottles': g.disposedBottles,
@@ -2880,6 +2951,7 @@ If a field cannot be determined, use empty string "".`
                 'Amount': item.amount,
                 'Unit': item.unit,
                 'Location': item.location || '',
+                'Label': item.label || '',
                 'Status': item.status,
                 'Running Low': item.status === 'active' && item.lowStock ? 'YES' : '',
                 'Expiration': item.expiration || '',
