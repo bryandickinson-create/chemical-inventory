@@ -272,6 +272,38 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
     font-size: 0.88rem;
 }
 
+.batch-hint {
+    font-size: 0.8rem;
+    color: var(--gray-500);
+    text-align: center;
+    margin: 0.15rem 0 0;
+}
+
+.photo-modal-inner {
+    position: relative;
+    max-width: 92vw;
+    max-height: 85vh;
+    margin: auto;
+    display: flex;
+}
+.photo-modal-inner img {
+    max-width: 92vw;
+    max-height: 85vh;
+    border-radius: var(--radius-sm);
+    object-fit: contain;
+    background: #000;
+}
+.photo-modal-inner .modal-close-btn {
+    position: absolute;
+    top: -0.5rem;
+    right: -0.5rem;
+    background: var(--surface);
+    border-radius: 999px;
+    width: 2rem;
+    height: 2rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
 .status-row {
     display: flex;
     align-items: center;

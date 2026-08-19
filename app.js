@@ -31,7 +31,7 @@
 
         async init() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open('ChemicalInventory', 4);
+                const request = indexedDB.open('ChemicalInventory', 5);
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
                     this.db = request.result;
@@ -58,6 +58,12 @@
                     // so a deletion still leaves a trace of who did it.
                     if (!db.objectStoreNames.contains('audit')) {
                         db.createObjectStore('audit', { keyPath: 'id' });
+                    }
+                    // Item photos, keyed by item id. Kept in their own store (and
+                    // their own Firebase node) so the frequent full-inventory
+                    // reads never drag image data along.
+                    if (!db.objectStoreNames.contains('photos')) {
+                        db.createObjectStore('photos', { keyPath: 'id' });
                     }
                 };
             });
@@ -147,6 +153,19 @@
 
         async getAllAudit() {
             return this._req(this._tx('audit', 'readonly').getAll());
+        }
+
+        // -- Item photos (thumbnail per item) --
+        async savePhoto(id, photo) {
+            return this._req(this._tx('photos', 'readwrite').put({ id, ...photo }));
+        }
+
+        async getPhoto(id) {
+            return this._req(this._tx('photos', 'readonly').get(id));
+        }
+
+        async deletePhoto(id) {
+            return this._req(this._tx('photos', 'readwrite').delete(id));
         }
     }
 
@@ -323,6 +342,20 @@
             return data ? Object.values(data) : [];
         }
 
+        // -- Item photos (own node, fetched only on demand) --
+        async savePhoto(id, photo) {
+            return this._set('photos/' + id, photo);
+        }
+
+        async getPhoto(id) {
+            const data = await this._get('photos/' + id);
+            return data || null;
+        }
+
+        async deletePhoto(id) {
+            return this._delete('photos/' + id);
+        }
+
         // Poll for changes every 10 seconds instead of WebSocket
         startSync(callback) {
             this.pollInterval = setInterval(callback, 10000);
@@ -450,6 +483,7 @@
             if (op.kind === 'listAdd') return this.remote.addListEntry(op.key, op.value);
             if (op.kind === 'listRemove') return this.remote.removeListEntry(op.key, op.value);
             if (op.kind === 'audit') return this.remote.addAudit(op.value);
+            if (op.kind === 'photo') return op.value ? this.remote.savePhoto(op.key, op.value) : this.remote.deletePhoto(op.key);
             return Promise.resolve();
         }
 
@@ -641,6 +675,37 @@
             }
         }
 
+        // -- Item photos --
+        savePhoto(id, photo) {
+            return this._write(
+                () => this.local.savePhoto(id, photo),
+                () => this.remote.savePhoto(id, photo),
+                { kind: 'photo', key: id, value: photo }
+            );
+        }
+
+        deletePhoto(id) {
+            return this._write(
+                () => this.local.deletePhoto(id),
+                () => this.remote.deletePhoto(id),
+                { kind: 'photo', key: id, value: null }
+            );
+        }
+
+        async getPhoto(id) {
+            const queued = this.pending.find(p => p.kind === 'photo' && p.key === id);
+            if (queued) return queued.value;
+            try {
+                const photo = await this.remote.getPhoto(id);
+                this._setOnline(true);
+                if (photo) this.local.savePhoto(id, photo).catch(() => { /* mirror best-effort */ });
+                return photo;
+            } catch (e) {
+                this._setOnline(false);
+                return this.local.getPhoto(id);
+            }
+        }
+
         startSync(callback) {
             this.pollInterval = setInterval(() => {
                 this.flush();
@@ -762,6 +827,7 @@
             this.approvedDuplicates = new Set(); // "productNumber|location" the user already OK'd this batch
             this.expandedGroups = new Set(); // group keys currently expanded in the inventory list
             this.pendingShots = [];  // extra photos of the current label, awaiting analysis together
+            this.pendingPhoto = null; // source image for the form in progress, saved as the item's thumbnail
         }
 
         getGeminiKey() {
@@ -1626,6 +1692,9 @@
                     snapStatus.textContent = 'Label read successfully!';
                     snapStatus.className = 'lookup-status success';
 
+                    // Keep the first photo to save as this bottle's thumbnail on submit.
+                    this.pendingPhoto = images[0] || null;
+
                     // Show and fill the form
                     const form = document.getElementById('chemical-form');
                     document.getElementById('chem-form').reset();
@@ -1692,9 +1761,146 @@
             }
         }
 
+        // ---- Batch upload: one photo = one bottle, added straight in ----
+        async handleBatchUpload(files) {
+            const list = Array.from(files || []).filter(Boolean);
+            if (!list.length) return;
+            if (!this.getSessionName() || !this.getSessionLocation()) {
+                showToast('Select your Name and Location first.', 'error');
+                return;
+            }
+            if (!this.getGeminiKey()) {
+                showToast('Set up your API key first (gear icon).', 'error');
+                this.openSettings();
+                return;
+            }
+            const snapStatus = document.getElementById('snap-status');
+            const total = list.length;
+            let done = 0, added = 0, failed = 0;
+            const update = () => {
+                snapStatus.textContent = `Batch: ${done}/${total} analysed · ${added} added` + (failed ? ` · ${failed} skipped` : '');
+                snapStatus.className = 'lookup-status loading';
+            };
+            update();
+
+            // A few at a time: parallel enough to be fast, gentle enough on the
+            // Gemini free-tier per-minute limit (the analyzer still retries 429s).
+            let idx = 0;
+            const worker = async () => {
+                while (idx < list.length) {
+                    const file = list[idx++];
+                    try {
+                        const image = await this.fileToBase64(file);
+                        const result = await this.analyzeWithGemini([image]);
+                        const res = result ? await this.addItemFromResult(result, image) : { ok: false };
+                        res.ok ? added++ : failed++;
+                    } catch (e) {
+                        console.error('Batch item failed:', e);
+                        failed++;
+                    }
+                    done++;
+                    update();
+                }
+            };
+            await Promise.all(Array.from({ length: Math.min(3, list.length) }, worker));
+
+            feedbackSuccess();
+            snapStatus.textContent = `Batch done: ${added} added` + (failed ? `, ${failed} skipped (couldn't read).` : '.');
+            snapStatus.className = 'lookup-status ' + (added ? 'success' : 'error');
+            this.refreshInventory();
+        }
+
+        // Builds and stores one bottle from an analysis result, using the current
+        // session Name/Location/Label. Returns {ok} so the batch can tally.
+        async addItemFromResult(result, sourceImage) {
+            const productName = (result.productName || '').trim();
+            const productNumber = (result.productNumber || '').trim();
+            if (!productName && !productNumber) return { ok: false };
+
+            const unitMap = { 'g': 'g', 'kg': 'kg', 'mg': 'mg', 'ml': 'mL', 'l': 'L', 'ul': 'uL', 'oz': 'oz', 'lb': 'lb' };
+            const rawUnit = (result.unit || '').toString().trim();
+            const unit = unitMap[rawUnit.toLowerCase()] || rawUnit || 'each';
+            const amount = (result.amount || '').toString().trim() || '1';
+            const vendor = (result.vendor || '').trim();
+            const casNumber = (result.casNumber || '').trim();
+            const addedBy = this.getSessionName();
+            const location = this.getSessionLocation();
+            const label = await this.canonicalLabel(this.getSessionLabel());
+            const barcode = productNumber
+                ? (productNumber + (amount && unit ? '-' + amount + unit.toUpperCase() : ''))
+                : 'LABEL-' + generateId();
+
+            const item = {
+                id: generateId(), barcode, vendor, productNumber, productName, casNumber,
+                amount, unit, location, label, expiration: '',
+                notes: result.lotNumber ? 'Lot: ' + result.lotNumber : '',
+                addedBy, removedBy: null, status: 'active',
+                dateIn: new Date().toISOString(), dateOut: null, history: [],
+            };
+
+            let thumb = null;
+            if (sourceImage) {
+                try { thumb = await this.makeThumbnail(sourceImage); item.hasPhoto = true; }
+                catch (e) { /* photo is a nice-to-have */ }
+            }
+            try {
+                await this.db.addItem(item);
+            } catch (e) {
+                console.error('Batch add failed:', e);
+                return { ok: false };
+            }
+            if (thumb) this.db.savePhoto(item.id, thumb).catch(() => { /* best-effort */ });
+            this.db.saveChemical({ barcode, vendor, productNumber, productName, casNumber, amount, unit })
+                .catch(() => { /* template cache is best-effort */ });
+            return { ok: true };
+        }
+
+        // ---- View a stored item photo ----
+        async viewPhoto(id) {
+            const modal = document.getElementById('photo-modal');
+            const img = document.getElementById('photo-modal-img');
+            img.src = '';
+            modal.style.display = '';
+            try {
+                const photo = await this.db.getPhoto(id);
+                if (photo && photo.data) {
+                    img.src = `data:${photo.mimeType || 'image/jpeg'};base64,${photo.data}`;
+                } else {
+                    this.closePhoto();
+                    showToast('No photo stored for this item.', 'error');
+                }
+            } catch (e) {
+                this.closePhoto();
+                showToast('Could not load the photo.', 'error');
+            }
+        }
+
+        closePhoto() {
+            document.getElementById('photo-modal').style.display = 'none';
+            document.getElementById('photo-modal-img').src = '';
+        }
+
         // Phone cameras produce 3-5 MB JPEGs; base64 inflates that by a third
         // again. Downscaling first cuts the upload roughly tenfold with no
         // measurable loss in label legibility.
+        // Shrinks a captured image to a small thumbnail for storage: big enough
+        // to recognise a label, small enough (~30-60 KB) that syncing it is cheap.
+        async makeThumbnail(image, maxDim = 600, quality = 0.6) {
+            const dataUrl = `data:${image.mimeType || 'image/jpeg'};base64,${image.data}`;
+            const img = await new Promise((resolve, reject) => {
+                const i = new Image();
+                i.onload = () => resolve(i);
+                i.onerror = reject;
+                i.src = dataUrl;
+            });
+            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+            return { data: canvas.toDataURL('image/jpeg', quality).split(',')[1], mimeType: 'image/jpeg' };
+        }
+
         async fileToBase64(file, maxDimension = 1400) {
             const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1995,6 +2201,21 @@ Use an empty string for any field that is not visible in any photo or cannot be 
                 e.target.value = ''; // Reset so the same file can be re-selected
             });
 
+            // Batch upload: many photos, one bottle each, auto-added.
+            document.getElementById('batch-upload').addEventListener('click', () => {
+                document.getElementById('batch-capture').click();
+            });
+            document.getElementById('batch-capture').addEventListener('change', (e) => {
+                if (e.target.files.length) this.handleBatchUpload(e.target.files);
+                e.target.value = '';
+            });
+
+            // Photo viewer
+            document.getElementById('photo-close').addEventListener('click', () => this.closePhoto());
+            document.getElementById('photo-modal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('photo-modal')) this.closePhoto();
+            });
+
             // In-app camera
             document.getElementById('camera-shutter').addEventListener('click', () => this.shootLabel());
             document.getElementById('camera-add').addEventListener('click', () => this.addShot());
@@ -2172,6 +2393,7 @@ Use an empty string for any field that is not visible in any photo or cannot be 
         }
 
         fillFormFromResult(result, fallbackBarcode, fallbackVendor) {
+            this.pendingPhoto = null; // typed/looked-up entry, no photo to attach
             const form = document.getElementById('chemical-form');
             document.getElementById('chem-form').reset();
             this.setLookupStatus('');
@@ -2236,6 +2458,7 @@ If a field cannot be determined, use empty string "".`
 
         // ---- Input Mode: Chemical Form ----
         async showInputForm(barcode) {
+            this.pendingPhoto = null; // typed entry, no photo to attach
             const known = await this.db.getChemical(barcode);
             const form = document.getElementById('chemical-form');
             const notice = document.getElementById('autofill-notice');
@@ -2365,8 +2588,17 @@ If a field cannot be determined, use empty string "".`
                 item.lowStockAt = now;
             }
 
+            // Attach the scanned label as this bottle's thumbnail, if there is one.
+            let thumb = null;
+            if (this.pendingPhoto) {
+                try { thumb = await this.makeThumbnail(this.pendingPhoto); item.hasPhoto = true; }
+                catch (e) { console.warn('Thumbnail failed:', e); }
+            }
+
             const ok = await this.write(() => this.db.addItem(item), 'Adding to inventory');
             if (!ok) return false;
+            if (thumb) this.db.savePhoto(item.id, thumb).catch(e => console.warn('Photo save failed:', e));
+            this.pendingPhoto = null;
             feedbackSuccess();
             showToast(`Added: ${productName} (${amount} ${unit})`, 'success');
             this.hideForm();
@@ -2447,6 +2679,7 @@ If a field cannot be determined, use empty string "".`
         hideForm() {
             document.getElementById('chemical-form').style.display = 'none';
             this.editingId = null;
+            this.pendingPhoto = null;
             document.getElementById('form-title').textContent = 'Add Chemical to Inventory';
             document.getElementById('form-submit').textContent = 'Add to Inventory';
             document.getElementById('f-location').closest('.form-group').style.display = 'none';
@@ -2692,6 +2925,7 @@ If a field cannot be determined, use empty string "".`
                         ${this.formatMoveHistory(item)}
                     </div>
                     <div class="inv-actions">
+                        ${item.hasPhoto ? `<button class="btn btn-secondary" onclick="app.viewPhoto('${item.id}')">&#128247; Photo</button>` : ''}
                         ${item.status === 'active'
                             ? `<button class="btn btn-danger" onclick="app.disposeSingle('${item.id}')">Dispose</button>`
                             : `<button class="btn btn-success" onclick="app.reactivate('${item.id}')">Reactivate</button>`
@@ -2892,6 +3126,7 @@ If a field cannot be determined, use empty string "".`
                 await this.db.deleteItem(id);
             }, 'Deleting entry');
             if (!ok) return;
+            if (item.hasPhoto) this.db.deletePhoto(id).catch(() => { /* orphan photo is harmless */ });
             showToast('Entry deleted.', 'success');
             this.refreshInventory();
         }

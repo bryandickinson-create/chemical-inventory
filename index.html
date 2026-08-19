@@ -12,7 +12,7 @@
     <meta name="apple-mobile-web-app-title" content="Inventory">
     <!-- Versioned like app.js: without it a cached stylesheet can outlive a
          deploy, leaving new markup styled by old CSS. Bump with CACHE_VERSION. -->
-    <link rel="stylesheet" href="style.css?v=53">
+    <link rel="stylesheet" href="style.css?v=54">
 </head>
 <body class="mode-input">
     <header>
@@ -117,6 +117,14 @@
         </div>
     </div>
 
+    <!-- Photo Modal -->
+    <div id="photo-modal" class="modal-overlay" style="display:none">
+        <div class="photo-modal-inner">
+            <button id="photo-close" class="modal-close-btn" aria-label="Close">&times;</button>
+            <img id="photo-modal-img" alt="Item label photo">
+        </div>
+    </div>
+
     <!-- Move Modal -->
     <div id="move-modal" class="modal-overlay" style="display:none">
         <div class="modal">
@@ -168,6 +176,11 @@
                     <span class="btn-icon">&#x1F4CB;</span> Snap Label (AI)
                 </button>
                 <input type="file" id="label-capture" accept="image/*" capture="environment" multiple style="display:none">
+                <button id="batch-upload" class="btn btn-secondary btn-large">
+                    <span class="btn-icon">&#x1F4F8;</span> Batch Add Photos
+                </button>
+                <input type="file" id="batch-capture" accept="image/*" multiple style="display:none">
+                <p class="batch-hint">One bottle per photo — each is read and added automatically using the Name / Location / Label above.</p>
                 <!-- In-app camera. Avoids the OS "Use Photo" confirmation that a
                      file input forces; one tap goes straight to analysis. -->
                 <div id="camera-view" class="camera-view" style="display:none">
@@ -336,7 +349,7 @@
     <div id="toast" class="toast"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="app.js?v=53"></script>
+    <script src="app.js?v=54"></script>
     <script>
         // Offline app shell. Registered after load so it never delays first paint.
         if ('serviceWorker' in navigator) {
