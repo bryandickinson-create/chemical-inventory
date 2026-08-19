@@ -2279,6 +2279,10 @@ If a field cannot be determined, use empty string "".`
             const addedBy = this.getSessionName();
             // Per-item label, falling back to the session label (the current bin).
             const labelRaw = document.getElementById('f-label').value.trim() || this.getSessionLabel();
+            // Status can be set at entry (e.g. logging an already-disposed bottle),
+            // plus a quick "running low" flag. Only used when adding, not editing.
+            const status = document.getElementById('f-status').value;
+            const lowStock = document.getElementById('f-low').checked;
 
             if (!vendor || !productNumber || !productName || !amount) {
                 showToast('Fill in all required fields.', 'error');
@@ -2348,6 +2352,19 @@ If a field cannot be determined, use empty string "".`
                 history: [],
             };
 
+            const now = item.dateIn;
+            if (status === 'disposed') {
+                item.status = 'disposed';
+                item.dateOut = now;
+                item.removedBy = addedBy;
+                this.addHistory(item, 'disposed', { by: addedBy, at: now });
+            }
+            if (lowStock) {
+                item.lowStock = true;
+                item.lowStockBy = addedBy;
+                item.lowStockAt = now;
+            }
+
             const ok = await this.write(() => this.db.addItem(item), 'Adding to inventory');
             if (!ok) return false;
             feedbackSuccess();
@@ -2388,6 +2405,9 @@ If a field cannot be determined, use empty string "".`
             document.getElementById('form-title').textContent = 'Edit Entry';
             document.getElementById('form-submit').textContent = 'Save Changes';
             document.getElementById('f-location').closest('.form-group').style.display = '';
+            // Status is set-at-entry only; editing an existing bottle keeps using
+            // the Dispose/Reactivate/Running-low actions in the inventory list.
+            document.getElementById('f-status-group').style.display = 'none';
             document.getElementById('autofill-notice').style.display = 'none';
             this.setLookupStatus('');
 
@@ -2430,6 +2450,7 @@ If a field cannot be determined, use empty string "".`
             document.getElementById('form-title').textContent = 'Add Chemical to Inventory';
             document.getElementById('form-submit').textContent = 'Add to Inventory';
             document.getElementById('f-location').closest('.form-group').style.display = 'none';
+            document.getElementById('f-status-group').style.display = '';
         }
 
         // ---- Inventory Display ----

@@ -272,6 +272,23 @@ body.mode-inventory .mode-btn[data-mode="inventory"] {
     font-size: 0.88rem;
 }
 
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.status-row select { flex: 0 0 auto; width: auto; }
+.inline-check {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.9rem;
+    color: var(--gray-600);
+    white-space: nowrap;
+    cursor: pointer;
+}
+.inline-check input { width: 16px; height: 16px; accent-color: var(--primary); }
+
 .optional-hint {
     font-weight: 400;
     text-transform: none;
